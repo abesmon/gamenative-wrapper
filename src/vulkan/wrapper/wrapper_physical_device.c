@@ -201,6 +201,36 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
       supported_features->fillModeNonSolid = true;
       supported_features->shaderClipDistance = true;
       supported_features->shaderCullDistance = true;
+
+      /* DXVK's D3D11 path requires VK_EXT_memory_priority unconditionally, at
+       * every feature level, so a driver without it gets no D3D11 device at
+       * all -- which is what Tegra X1 hits.  The extension is a pure allocator
+       * hint: VkMemoryPriorityAllocateInfoEXT only says which allocations to
+       * evict first under pressure, and an implementation is free to ignore
+       * the value.  Advertise it and drop the hint.
+       *
+       * Nothing leaks down to the base driver: the extension name is filtered
+       * out by wrapper_filter_enabled_extensions (it is absent from
+       * base_supported_extensions) and the feature struct is unlinked from the
+       * device pNext chain.  VkMemoryPriorityAllocateInfoEXT is left alone in
+       * vkAllocateMemory on purpose -- the spec requires every component to
+       * skip extending structures it does not know, so rebuilding the chain on
+       * a hot path would buy nothing. */
+      if (!pdevice->base_supported_extensions.EXT_memory_priority) {
+         WRAPPER_LOG(info, "Faking VK_EXT_memory_priority");
+         pdevice->vk.supported_extensions.EXT_memory_priority = true;
+         supported_features->memoryPriority = true;
+      }
+
+      /* Likewise VK_EXT_host_query_reset, required by DXVK from feature level
+       * 9_1 up.  Unlike memory priority this one has real behaviour, so it is
+       * emulated rather than ignored: wrapper_ResetQueryPool records
+       * vkCmdResetQueryPool on an internal command buffer and waits for it. */
+      if (!pdevice->base_supported_extensions.EXT_host_query_reset) {
+         WRAPPER_LOG(info, "Emulating VK_EXT_host_query_reset");
+         pdevice->vk.supported_extensions.EXT_host_query_reset = true;
+         supported_features->hostQueryReset = true;
+      }
       if (wrapper_disable_present_wait) {
          WRAPPER_LOG(info, "Disabling present wait");
          supported_features->presentWait = false;

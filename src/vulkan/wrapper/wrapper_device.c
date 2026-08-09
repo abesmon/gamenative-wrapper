@@ -178,6 +178,18 @@ static void process_pnext_chain(VkBaseInStructure *create_info, struct wrapper_p
              WRAPPER_LOG(info, "Unlinking VkPhysicalDeviceRobustness2FeaturesEXT from pNext chain");
              unlink_vk_struct(create_info, &current, &prev);
              continue;
+          case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_PRIORITY_FEATURES_EXT:
+             if (pdevice->base_supported_extensions.EXT_memory_priority)
+                break;
+             WRAPPER_LOG(info, "Unlinking VkPhysicalDeviceMemoryPriorityFeaturesEXT from pNext chain");
+             unlink_vk_struct(create_info, &current, &prev);
+             continue;
+          case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_HOST_QUERY_RESET_FEATURES:
+             if (pdevice->base_supported_extensions.EXT_host_query_reset)
+                break;
+             WRAPPER_LOG(info, "Unlinking VkPhysicalDeviceHostQueryResetFeatures from pNext chain");
+             unlink_vk_struct(create_info, &current, &prev);
+             continue;
           case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT:
              if (pdevice->base_supported_extensions.EXT_dynamic_rendering_unused_attachments)
                 break;
@@ -231,6 +243,178 @@ static void process_pnext_chain(VkBaseInStructure *create_info, struct wrapper_p
    }
 }
 
+/* VK_EXT_host_query_reset emulation.
+ *
+ * A driver without the extension can only reset a query pool from a command
+ * buffer, so record vkCmdResetQueryPool into a private single-use buffer,
+ * submit it and wait.  vkResetQueryPool is specified to have taken effect by
+ * the time it returns -- callers may reuse the queries immediately -- so the
+ * wait is not optional.
+ *
+ * This costs a device round trip per call, which is why it stays behind the
+ * base-driver check: a driver with the real extension never gets here.
+ */
+/* True when the emulation is live and shares this queue, so submits on it must
+ * be serialised against the reset submit. */
+static bool
+wrapper_query_reset_owns_queue(const struct wrapper_queue *queue)
+{
+   const struct wrapper_device *device = queue->device;
+
+   return device->query_reset_state == 1 &&
+          device->query_reset_queue_valid &&
+          device->query_reset_queue == queue->dispatch_handle;
+}
+
+static bool
+wrapper_query_reset_init_locked(struct wrapper_device *device)
+{
+   const struct vk_device_dispatch_table *dt = &device->dispatch_table;
+   VkDevice dev = device->dispatch_handle;
+   VkResult result;
+
+   if (device->query_reset_state)
+      return device->query_reset_state > 0;
+
+   /* Pessimistic until fully built, so a partial failure is not retried on
+    * every query reset. */
+   device->query_reset_state = -1;
+
+   if (!device->query_reset_queue_valid) {
+      WRAPPER_LOG(error, "Host query reset emulation: device has no queue");
+      return false;
+   }
+
+   result = dt->CreateCommandPool(dev, &(VkCommandPoolCreateInfo) {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO,
+      .flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT |
+               VK_COMMAND_POOL_CREATE_TRANSIENT_BIT,
+      .queueFamilyIndex = device->query_reset_queue_family,
+   }, NULL, &device->query_reset_pool);
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Host query reset emulation: CreateCommandPool %d", result);
+      return false;
+   }
+
+   result = dt->AllocateCommandBuffers(dev, &(VkCommandBufferAllocateInfo) {
+      .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+      .commandPool = device->query_reset_pool,
+      .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+      .commandBufferCount = 1,
+   }, &device->query_reset_cmd);
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Host query reset emulation: AllocateCommandBuffers %d", result);
+      return false;
+   }
+
+   result = dt->CreateFence(dev, &(VkFenceCreateInfo) {
+      .sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO,
+   }, NULL, &device->query_reset_fence);
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Host query reset emulation: CreateFence %d", result);
+      return false;
+   }
+
+   device->query_reset_state = 1;
+   return true;
+}
+
+static void
+wrapper_query_reset_finish(struct wrapper_device *device)
+{
+   const struct vk_device_dispatch_table *dt = &device->dispatch_table;
+   VkDevice dev = device->dispatch_handle;
+
+   if (dev == VK_NULL_HANDLE)
+      return;
+
+   simple_mtx_lock(&device->query_reset_mutex);
+
+   if (device->query_reset_fence != VK_NULL_HANDLE)
+      dt->DestroyFence(dev, device->query_reset_fence, NULL);
+   /* The command buffer is freed with its pool. */
+   if (device->query_reset_pool != VK_NULL_HANDLE)
+      dt->DestroyCommandPool(dev, device->query_reset_pool, NULL);
+
+   device->query_reset_fence = VK_NULL_HANDLE;
+   device->query_reset_cmd = VK_NULL_HANDLE;
+   device->query_reset_pool = VK_NULL_HANDLE;
+   device->query_reset_state = -1;
+
+   simple_mtx_unlock(&device->query_reset_mutex);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+wrapper_ResetQueryPool(VkDevice _device, VkQueryPool queryPool,
+                       uint32_t firstQuery, uint32_t queryCount)
+{
+   VK_FROM_HANDLE(wrapper_device, device, _device);
+   const struct vk_device_dispatch_table *dt = &device->dispatch_table;
+   VkResult result;
+
+   if (device->physical->base_supported_extensions.EXT_host_query_reset) {
+      dt->ResetQueryPool(device->dispatch_handle, queryPool,
+                         firstQuery, queryCount);
+      return;
+   }
+
+   simple_mtx_lock(&device->query_reset_mutex);
+
+   if (!wrapper_query_reset_init_locked(device))
+      goto out;
+
+   result = dt->ResetCommandBuffer(device->query_reset_cmd, 0);
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Host query reset emulation: ResetCommandBuffer %d", result);
+      goto out;
+   }
+
+   result = dt->BeginCommandBuffer(device->query_reset_cmd,
+      &(VkCommandBufferBeginInfo) {
+         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+         .flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT,
+      });
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Host query reset emulation: BeginCommandBuffer %d", result);
+      goto out;
+   }
+
+   dt->CmdResetQueryPool(device->query_reset_cmd, queryPool,
+                         firstQuery, queryCount);
+
+   result = dt->EndCommandBuffer(device->query_reset_cmd);
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Host query reset emulation: EndCommandBuffer %d", result);
+      goto out;
+   }
+
+   dt->ResetFences(device->dispatch_handle, 1, &device->query_reset_fence);
+
+   result = dt->QueueSubmit(device->query_reset_queue, 1, &(VkSubmitInfo) {
+      .sType = VK_STRUCTURE_TYPE_SUBMIT_INFO,
+      .commandBufferCount = 1,
+      .pCommandBuffers = &device->query_reset_cmd,
+   }, device->query_reset_fence);
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Host query reset emulation: QueueSubmit %d", result);
+      goto out;
+   }
+
+   result = dt->WaitForFences(device->dispatch_handle, 1,
+                              &device->query_reset_fence, VK_TRUE, UINT64_MAX);
+   if (result != VK_SUCCESS)
+      WRAPPER_LOG(error, "Host query reset emulation: WaitForFences %d", result);
+
+out:
+   simple_mtx_unlock(&device->query_reset_mutex);
+}
+
+/* Do not define wrapper_ResetQueryPoolEXT. The generated table lists the core
+ * entry point and its EXT alias separately, but both resolve to one dispatch
+ * slot, so defining the alias too trips the "disp[disp_index] == NULL" assert
+ * in vk_device_dispatch_table_from_entrypoints and kills device creation.
+ * Defining only the core entry point covers both names. */
+
 static VkResult
 wrapper_create_device_queue(struct wrapper_device *device,
                             const VkDeviceCreateInfo* pCreateInfo)
@@ -263,6 +447,14 @@ wrapper_create_device_queue(struct wrapper_device *device,
                j, &queue->dispatch_handle);
          }
          queue->device = device;
+
+         /* Remember the first queue for host query reset emulation, which
+          * needs somewhere to submit its reset command buffer. */
+         if (!device->query_reset_queue_valid) {
+            device->query_reset_queue = queue->dispatch_handle;
+            device->query_reset_queue_family = create_info->queueFamilyIndex;
+            device->query_reset_queue_valid = true;
+         }
 
          result = vk_queue_init(&queue->vk, &device->vk, create_info, j);
          if (result != VK_SUCCESS) {
@@ -649,6 +841,7 @@ wrapper_CreateDevice(VkPhysicalDevice physicalDevice,
    
    simple_mtx_init(&device->resource_mutex, mtx_plain);
    simple_mtx_init(&device->bcn_gpu_mutex, mtx_plain);
+   simple_mtx_init(&device->query_reset_mutex, mtx_plain);
    device->bcn_gpu_state = 0;
    device->physical = physical_device;
 
@@ -1860,8 +2053,18 @@ wrapper_QueueSubmit(VkQueue _queue, uint32_t submitCount,
       wrapper_submits[i].pCommandBuffers = command_buffers;
    }
 
+   /* Host query reset emulation submits on this same queue, and a VkQueue is
+    * externally synchronised, so serialise against it. Only relevant while the
+    * emulation is live; a driver with the real extension never takes the lock. */
+   bool serialise = wrapper_query_reset_owns_queue(queue);
+   if (serialise)
+      simple_mtx_lock(&queue->device->query_reset_mutex);
+
    result = queue->device->dispatch_table.QueueSubmit(
       queue->dispatch_handle, submitCount, wrapper_submits, fence);
+
+   if (serialise)
+      simple_mtx_unlock(&queue->device->query_reset_mutex);
 
    if (result == VK_ERROR_DEVICE_LOST)
       wrapper_log_device_fault(queue->device);
@@ -1898,8 +2101,15 @@ wrapper_QueueSubmit2(VkQueue _queue, uint32_t submitCount,
       wrapper_submits[i].pCommandBufferInfos = command_buffers;
    }
 
+   bool serialise = wrapper_query_reset_owns_queue(queue);
+   if (serialise)
+      simple_mtx_lock(&queue->device->query_reset_mutex);
+
    result = queue->device->dispatch_table.QueueSubmit2(
       queue->dispatch_handle, submitCount, wrapper_submits, fence);
+
+   if (serialise)
+      simple_mtx_unlock(&queue->device->query_reset_mutex);
 
    if (result == VK_ERROR_DEVICE_LOST)
       wrapper_log_device_fault(queue->device);
@@ -2831,6 +3041,8 @@ wrapper_DestroyDevice(VkDevice _device, const VkAllocationCallbacks* pAllocator)
 {
    VK_FROM_HANDLE(wrapper_device, device, _device);
 
+   wrapper_query_reset_finish(device);
+
    simple_mtx_lock(&device->resource_mutex);
 
    list_for_each_entry_safe(struct wrapper_command_buffer, wcb,
@@ -2881,6 +3093,7 @@ wrapper_DestroyDevice(VkDevice _device, const VkAllocationCallbacks* pAllocator)
       simple_mtx_destroy(&device->push_mutex);
    }
    simple_mtx_destroy(&device->resource_mutex);
+   simple_mtx_destroy(&device->query_reset_mutex);
    vk_device_finish(&device->vk);
    vk_free2(&device->vk.alloc, pAllocator, device);
 }
