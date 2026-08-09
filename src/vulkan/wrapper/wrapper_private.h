@@ -108,6 +108,18 @@ struct wrapper_device {
    VkPipelineLayout bcn_pipe_layout;
    VkPipeline bcn_pipeline;
    VkDeviceSize bcn_gpu_inflight;        /* transient GPU-transcode bytes not yet freed */
+
+   /* VK_EXT_host_query_reset emulation, lazily initialized. Drivers without
+    * the extension (Tegra X1) can only reset a query pool from a command
+    * buffer, so keep a private pool/buffer/fence and a queue to submit on. */
+   simple_mtx_t query_reset_mutex;
+   int query_reset_state;                /* 0 uninit, 1 ready, -1 unavailable */
+   VkCommandPool query_reset_pool;
+   VkCommandBuffer query_reset_cmd;
+   VkFence query_reset_fence;
+   VkQueue query_reset_queue;            /* base-driver handle, not wrapped */
+   uint32_t query_reset_queue_family;
+   bool query_reset_queue_valid;
 };
 
 VK_DEFINE_HANDLE_CASTS(wrapper_device, vk.base, VkDevice,
