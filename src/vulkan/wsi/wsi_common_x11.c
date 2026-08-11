@@ -882,7 +882,19 @@ get_sorted_vk_formats(VkIcdSurfaceBase *surface, struct wsi_device *wsi_device,
 next_format:;
    }
 
-   if (wsi_device->force_bgra8_unorm_first) {
+   /* Prefer BGRA only on the software path, where the X server reads the
+    * pixels back and expects that channel order.
+    *
+    * On the AHardwareBuffer path the swapchain format is translated to an
+    * AHardwareBuffer format, and B8G8R8A8 maps to
+    * AHARDWAREBUFFER_FORMAT_B8G8R8A8_UNORM -- a legacy format that gralloc
+    * implementations are not required to support and that Tegra does not
+    * handle the way the consumer expects, which shows up as corruption across
+    * the whole frame. R8G8B8A8 is the format every implementation supports.
+    *
+    * Suspected cause of the DRI3 corruption; see
+    * docs/investigations/stack-overhead-2026-08-09.md. */
+   if (wsi_device->force_bgra8_unorm_first && wsi_device->sw) {
       for (unsigned i = 0; i < *count; i++) {
          if (sorted_formats[i] == VK_FORMAT_B8G8R8A8_UNORM) {
             sorted_formats[i] = sorted_formats[0];
