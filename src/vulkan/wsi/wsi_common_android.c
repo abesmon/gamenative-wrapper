@@ -189,6 +189,107 @@ wsi_create_ahardware_buffer_image_mem(const struct wsi_swapchain *chain,
    return VK_SUCCESS;
 }
 
+/* Release the image to an external consumer.
+ *
+ * The X server imports this AHardwareBuffer into its own device and reads it.
+ * Vulkan describes that handover as a pair of queue family ownership transfers,
+ * and it is the release half -- performed here, on the producing device -- that
+ * makes the contents intelligible outside: a colour attachment lives in a
+ * driver-private, typically compressed layout, and only the release resolves
+ * it. Without it the importer samples the compressed bytes, which on Tegra
+ * shows up as a blocky image or, once the image is declared the way this side
+ * declares it, as no image at all.
+ *
+ * Nothing else in this path does it: implicit dma-buf synchronisation does not
+ * exist on Android, and DRI3 explicit sync needs v1.4, which the X server here
+ * does not implement.
+ */
+static VkResult
+wsi_create_ahb_release_cmd_buffers(const struct wsi_swapchain *chain,
+                                   struct wsi_image *image)
+{
+   const struct wsi_device *wsi = chain->wsi;
+   VkResult result;
+
+   const uint32_t count = wsi->queue_family_count;
+   image->ahb_release_cmd_buffers =
+      vk_zalloc(&chain->alloc, sizeof(VkCommandBuffer) * count, 8,
+                VK_SYSTEM_ALLOCATION_SCOPE_OBJECT);
+   if (!image->ahb_release_cmd_buffers)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   for (uint32_t i = 0; i < count; i++) {
+      if (!chain->cmd_pools[i])
+         continue;
+
+      const VkCommandBufferAllocateInfo cmd_buffer_info = {
+         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO,
+         .commandPool = chain->cmd_pools[i],
+         .level = VK_COMMAND_BUFFER_LEVEL_PRIMARY,
+         .commandBufferCount = 1,
+      };
+      result = wsi->AllocateCommandBuffers(chain->device, &cmd_buffer_info,
+                                           &image->ahb_release_cmd_buffers[i]);
+      if (result != VK_SUCCESS) {
+         WRAPPER_LOG(error, "Failed to allocate ahb release cmd buffer, res %d",
+                     result);
+         return result;
+      }
+
+      const VkCommandBufferBeginInfo begin_info = {
+         .sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO,
+      };
+      wsi->BeginCommandBuffer(image->ahb_release_cmd_buffers[i], &begin_info);
+
+      const VkImageMemoryBarrier release = {
+         .sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+         .srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT |
+                          VK_ACCESS_TRANSFER_WRITE_BIT,
+         /* Ignored for a release operation. */
+         .dstAccessMask = 0,
+         .oldLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR,
+         /* The importer has to begin its acquire from the layout this release
+          * ends in, and it cannot name PRESENT_SRC_KHR for an image that does
+          * not belong to its own swapchain. GENERAL is valid on both sides and,
+          * unlike UNDEFINED, keeps the contents -- which is the whole point of
+          * handing the image over. */
+         .newLayout = VK_IMAGE_LAYOUT_GENERAL,
+         .srcQueueFamilyIndex = i,
+         .dstQueueFamilyIndex = VK_QUEUE_FAMILY_FOREIGN_EXT,
+         .image = image->image,
+         .subresourceRange = {
+            .aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+            .baseMipLevel = 0,
+            .levelCount = 1,
+            .baseArrayLayer = 0,
+            .layerCount = 1,
+         },
+      };
+      wsi->CmdPipelineBarrier(image->ahb_release_cmd_buffers[i],
+                              VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+                              VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+                              0, 0, NULL, 0, NULL, 1, &release);
+
+      result = wsi->EndCommandBuffer(image->ahb_release_cmd_buffers[i]);
+      if (result != VK_SUCCESS) {
+         WRAPPER_LOG(error, "Failed to record ahb release barrier, res %d",
+                     result);
+         return result;
+      }
+   }
+
+   WRAPPER_LOG(info, "Recorded AHB ownership release barriers");
+   return VK_SUCCESS;
+}
+
+static VkResult
+wsi_finish_create_ahardware_buffer_image(const struct wsi_swapchain *chain,
+                                         const struct wsi_image_info *info,
+                                         struct wsi_image *image)
+{
+   return wsi_create_ahb_release_cmd_buffers(chain, image);
+}
+
 static VkResult
 wsi_create_ahardware_buffer_blit_context(const struct wsi_swapchain *chain,
                                          const struct wsi_image_info *info,
@@ -408,6 +509,7 @@ wsi_configure_android_image(
       info->create_mem = wsi_create_ahardware_buffer_blit_context;
    } else {
       info->create_mem = wsi_create_ahardware_buffer_image_mem;
+      info->finish_create = wsi_finish_create_ahardware_buffer_image;
    }
 
    return VK_SUCCESS;
