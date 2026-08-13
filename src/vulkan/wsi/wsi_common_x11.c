@@ -71,7 +71,37 @@
 
 #ifdef __TERMUX__
 #include <android/hardware_buffer.h>
+#include <poll.h>
 #include <sys/socket.h>
+
+/* How long to wait for the X server's acknowledgement that it has taken an
+ * AHardwareBuffer off the socket. Long enough that a loaded server is not
+ * mistaken for a broken one, and finite because the alternative is a
+ * vkCreateSwapchainKHR that never returns. */
+#define WSI_AHB_ACK_TIMEOUT_MS 5000
+
+/* Reads that one-byte acknowledgement. Returns false if it does not arrive. */
+static bool
+x11_read_ahb_ack(int fd)
+{
+   struct pollfd descriptor = { .fd = fd, .events = POLLIN };
+   int ready;
+   ssize_t got;
+   uint8_t byte;
+
+   do {
+      ready = poll(&descriptor, 1, WSI_AHB_ACK_TIMEOUT_MS);
+   } while (ready < 0 && errno == EINTR);
+
+   if (ready <= 0)
+      return false;
+
+   do {
+      got = read(fd, &byte, 1);
+   } while (got < 0 && errno == EINTR);
+
+   return got == 1;
+}
 #endif
 
 #ifndef XCB_PRESENT_OPTION_ASYNC_MAY_TEAR
@@ -2116,6 +2146,7 @@ x11_image_init(VkDevice device_h, struct x11_swapchain *chain,
 #ifdef HAVE_X11_DRM
    xcb_void_cookie_t cookie;
    xcb_generic_error_t *error = NULL;
+   bool cookie_checked = false;
    uint32_t bpp = 32;
    
    image->update_region = xcb_generate_id(chain->conn);
@@ -2186,13 +2217,41 @@ x11_image_init(VkDevice device_h, struct x11_swapchain *chain,
                                               fds);
 #ifdef __TERMUX__
       if (image->base.ahardware_buffer) {
-         xcb_flush(chain->conn);
-         uint8_t read_buf;
-         read(sock_fds[0], &read_buf, 1);
+         /* The server acknowledges with one byte before it takes the buffer
+          * off the socket, and it writes that byte only on the path that
+          * succeeds: every error return in its DRI3 handler skips both. So
+          * waiting for the byte before knowing whether the request was
+          * accepted makes any rejection an indefinite stall inside
+          * vkCreateSwapchainKHR rather than a failed swapchain -- which is
+          * what a BadIdChoice from the server was measured to do.
+          *
+          * Collect the request's error first. xcb_request_check is a round
+          * trip, so a request that completed without error has already
+          * written its byte by the time it returns, and one that failed is
+          * never waited for. */
+         bool acknowledged = false;
+
+         error = xcb_request_check(chain->conn, cookie);
+         cookie_checked = true;
+
+         if (error == NULL)
+            acknowledged = x11_read_ahb_ack(sock_fds[0]);
+
          for (int i = 0; i < ARRAY_SIZE(sock_fds); i++) {
             close(sock_fds[i]);
          }
          image->base.dma_buf_fd = -1;
+
+         if (error != NULL) {
+            free(error);
+            error = NULL;
+            goto fail_image;
+         }
+
+         /* The server took the request but never answered. Nothing here can
+          * tell whether it has the buffer, so the image cannot be used. */
+         if (!acknowledged)
+            goto fail_image;
       }
 #endif
    } else {
@@ -2215,7 +2274,8 @@ x11_image_init(VkDevice device_h, struct x11_swapchain *chain,
                                              chain->depth, bpp, fd);
    }
 
-   error = xcb_request_check(chain->conn, cookie);
+   if (!cookie_checked)
+      error = xcb_request_check(chain->conn, cookie);
    if (error != NULL) {
       free(error);
       goto fail_image;
