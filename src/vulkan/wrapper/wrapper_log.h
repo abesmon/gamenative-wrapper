@@ -13,6 +13,9 @@
 #define WRAPPER_LOG_VALIDATION (1ull << 3)
 #define WRAPPER_LOG_BCN (1ull << 4)
 #define WRAPPER_LOG_APIDUMP (1ull << 5)
+/* Structured tracing of the calls the wrapper rewrites; see wrapper_trace.h.
+ * Unlike apidump this is meant to stay usable while a game runs. */
+#define WRAPPER_LOG_TRACE (1ull << 6)
 
 struct wrapper_log {
 	char *name;

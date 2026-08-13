@@ -1,5 +1,6 @@
 #include "wrapper_private.h"
 #include "wrapper_log.h"
+#include "wrapper_trace.h"
 #include "wrapper_entrypoints.h"
 #include "vk_common_entrypoints.h"
 #include "util/os_file.h"
@@ -519,7 +520,21 @@ wrapper_AllocateMemory(VkDevice _device,
    VkMemoryPropertyFlags property_flags =
       device->physical->memory_properties.memoryTypes[
          pAllocateInfo->memoryTypeIndex].propertyFlags;
-   
+
+   /* The pNext contents decide which of four allocation paths this takes, and
+    * the choice is invisible afterwards, so it is recorded before the branch. */
+   WRAPPER_TRACE("AllocateMemory request size=%llu type=%u flags=0x%x%s%s%s%s",
+                 (unsigned long long)pAllocateInfo->allocationSize,
+                 pAllocateInfo->memoryTypeIndex, property_flags,
+                 vk_find_struct_const(pAllocateInfo, IMPORT_ANDROID_HARDWARE_BUFFER_INFO_ANDROID) ?
+                    " import=ahb" : "",
+                 vk_find_struct_const(pAllocateInfo, IMPORT_MEMORY_FD_INFO_KHR) ?
+                    " import=fd" : "",
+                 vk_find_struct_const(pAllocateInfo, EXPORT_MEMORY_ALLOCATE_INFO) ?
+                    " export=1" : "",
+                 vk_find_struct_const(pAllocateInfo, MEMORY_DEDICATED_ALLOCATE_INFO) ?
+                    " dedicated=1" : "");
+
    if (!(property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
       goto fallback;
     
@@ -651,11 +666,15 @@ wrapper_AllocateMemory(VkDevice _device,
 
 out:
    simple_mtx_unlock(&device->resource_mutex);
+   WRAPPER_TRACE("AllocateMemory result %d path=placed backend=%s", result,
+                 device->physical->resource_type);
    return result;
 
 fallback:
-   return device->dispatch_table.AllocateMemory(device->dispatch_handle,
+   result = device->dispatch_table.AllocateMemory(device->dispatch_handle,
       pAllocateInfo, pAllocator, pMemory);
+   WRAPPER_TRACE("AllocateMemory result %d path=driver", result);
+   return result;
 }
 
 VKAPI_ATTR void VKAPI_CALL
