@@ -3,6 +3,7 @@
 
 #include "wrapper_private.h"
 #include "wrapper_log.h"
+#include "wrapper_trace.h"
 #include "wrapper_entrypoints.h"
 #include "wrapper_trampolines.h"
 #include "vk_alloc.h"
@@ -955,7 +956,12 @@ wrapper_GetPhysicalDeviceFormatProperties(VkPhysicalDevice physicalDevice,
          break;
 
       if (pdevice->emulate_bcn > 0) {
+         VkFormatFeatureFlags driver_optimal =
+            pFormatProperties->optimalTilingFeatures;
          pFormatProperties->optimalTilingFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+         WRAPPER_TRACE("GetFormatProperties transform format=%s optimal=0x%x->0x%x "
+                       "reason=bcn_emulation", wrapper_trace_format(format),
+                       driver_optimal, pFormatProperties->optimalTilingFeatures);
       }
       break;
    default:
@@ -999,6 +1005,10 @@ wrapper_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
             VK_FORMAT_FEATURE_BLIT_SRC_BIT |
             VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT |
             VK_FORMAT_FEATURE_TRANSFER_SRC_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
+         WRAPPER_TRACE("GetFormatProperties2 transform format=%s optimal=0x%x->0x%x "
+                       "reason=bcn_emulation", wrapper_trace_format(format),
+                       pFormatProperties->formatProperties.optimalTilingFeatures,
+                       pFormatProperties->formatProperties.optimalTilingFeatures | bc);
          pFormatProperties->formatProperties.optimalTilingFeatures |= bc;
 
          VkBaseOutStructure *s = (VkBaseOutStructure *)pFormatProperties->pNext;
