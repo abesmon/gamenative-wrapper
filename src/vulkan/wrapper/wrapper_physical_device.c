@@ -917,7 +917,22 @@ wrapper_GetPhysicalDeviceFormatProperties(VkPhysicalDevice physicalDevice,
                                             VkFormatProperties* pFormatProperties)
 {
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
-   
+
+   /* Ask the driver first, always. The emulated BC formats then add what the
+    * emulation provides on top of what the driver already does.
+    *
+    * This used to return early for those formats, so the driver was never
+    * asked and the four bits below were OR-ed into an output structure nobody
+    * had written. On a driver with real BC support that silently removed
+    * capabilities it has: on Tegra, TRANSFER_SRC disappeared from optimal
+    * tiling and linear tiling came back empty, so a caller using this
+    * entry point could not copy out of a BC image the driver can copy out of.
+    * The Properties2 path above already had the right shape; this one just
+    * never got it.
+    */
+   pdevice->dispatch_table.GetPhysicalDeviceFormatProperties(pdevice->dispatch_handle,
+      format, pFormatProperties);
+
    switch (format) {
    case VK_FORMAT_BC1_RGB_UNORM_BLOCK:
    case VK_FORMAT_BC1_RGB_SRGB_BLOCK:
@@ -938,18 +953,14 @@ wrapper_GetPhysicalDeviceFormatProperties(VkPhysicalDevice physicalDevice,
       if (pdevice->driver_properties.driverID == VK_DRIVER_ID_SAMSUNG_PROPRIETARY &&
           format <= 138 && pdevice->emulate_bcn == 3)
          break;
-         
+
       if (pdevice->emulate_bcn > 0) {
          pFormatProperties->optimalTilingFeatures |= VK_FORMAT_FEATURE_SAMPLED_IMAGE_BIT | VK_FORMAT_FEATURE_BLIT_SRC_BIT | VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT | VK_FORMAT_FEATURE_TRANSFER_DST_BIT;
-         return;
       }
       break;
    default:
-      break;   
+      break;
    }
-   
-   pdevice->dispatch_table.GetPhysicalDeviceFormatProperties(pdevice->dispatch_handle,
-      format, pFormatProperties);
 }
 
 VKAPI_ATTR void VKAPI_CALL
