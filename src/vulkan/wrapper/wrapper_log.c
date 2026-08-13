@@ -16,6 +16,7 @@ static struct wrapper_log wrapper_log_options[] = {
 	{"validation", WRAPPER_LOG_VALIDATION},
 	{"bcn", WRAPPER_LOG_BCN},
 	{"apidump", WRAPPER_LOG_APIDUMP},
+	{"trace", WRAPPER_LOG_TRACE},
 	{NULL, 0}
 };
 

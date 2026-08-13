@@ -5,6 +5,7 @@
 
 #include "wrapper_private.h"
 #include "wrapper_log.h"
+#include "wrapper_trace.h"
 #include "wrapper_bcdec.h"
 #include "wrapper_bcn_spv.h"
 #include "spirv_patcher.hpp"
@@ -1077,8 +1078,14 @@ wrapper_CreateBuffer(VkDevice _device,
       handle_types = ext_info->handleTypes;
    }
 
+   WRAPPER_TRACE("CreateBuffer request size=%llu usage=0x%x external=0x%x",
+                 (unsigned long long)pCreateInfo->size, pCreateInfo->usage,
+                 handle_types);
+
    res = device->dispatch_table.CreateBuffer(device->dispatch_handle,
       pCreateInfo, pAllocator, pBuffer);
+
+   WRAPPER_TRACE("CreateBuffer result %d", res);
 
    if (res != VK_SUCCESS) {
       WRAPPER_LOG(error, "Failed to create buffer, res %d", res);
@@ -1242,8 +1249,23 @@ wrapper_CreateImage(VkDevice _device,
     * driver. */
    create_info = *pCreateInfo;
 
+   WRAPPER_TRACE("CreateImage request format=%s extent=%ux%ux%u mips=%u layers=%u "
+                 "usage=0x%x tiling=%s flags=0x%x external=0x%x%s%s",
+                 wrapper_trace_format(pCreateInfo->format),
+                 pCreateInfo->extent.width, pCreateInfo->extent.height,
+                 pCreateInfo->extent.depth, pCreateInfo->mipLevels,
+                 pCreateInfo->arrayLayers, pCreateInfo->usage,
+                 wrapper_trace_tiling(pCreateInfo->tiling), pCreateInfo->flags,
+                 handle_types, is_wsi_image ? " wsi=1" : "",
+                 is_emulated_bgra8 ? " emulated_bgra8=1" : "");
+
    if (is_emulated_bcn(device->physical, pCreateInfo->format)) {
       create_info.format = get_format_for_bcn(pCreateInfo->format);
+      WRAPPER_TRACE("CreateImage transform format=%s->%s reason=bcn_emulation%s",
+                    wrapper_trace_format(pCreateInfo->format),
+                    wrapper_trace_format(create_info.format),
+                    (pCreateInfo->flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT) ?
+                       " dropped=MUTABLE_FORMAT" : "");
       if (create_info.flags & VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT)
          create_info.flags &= ~VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT;
 
@@ -1262,6 +1284,9 @@ wrapper_CreateImage(VkDevice _device,
 
    res = device->dispatch_table.CreateImage(device->dispatch_handle,
       &create_info, pAllocator, pImage);
+
+   WRAPPER_TRACE("CreateImage result %d format=%s", res,
+                 wrapper_trace_format(create_info.format));
 
    if (res != VK_SUCCESS) {
       WRAPPER_LOG(error, "Failed to create image, res %d", res);
