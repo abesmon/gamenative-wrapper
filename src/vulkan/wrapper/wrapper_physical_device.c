@@ -1038,8 +1038,24 @@ wrapper_GetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice,
    if (wrapper_vmem_max_size == -1)
       wrapper_vmem_max_size = getenv("WRAPPER_VMEM_MAX_SIZE") ? atoi(getenv("WRAPPER_VMEM_MAX_SIZE")) : 0;
 
-   if (wrapper_vmem_max_size > 0)
-      pMemoryProperties->memoryHeaps[0].size = (VkDeviceSize)wrapper_vmem_max_size * 1048576;   
+   /* The override may lower the reported heap, never raise it.
+    *
+    * Raising it is not a harmless hint: DXVK budgets against this number, and
+    * on Tegra exhausting the real heap does not produce
+    * VK_ERROR_OUT_OF_DEVICE_MEMORY -- it panics the kernel. GameNative's
+    * container setting defaults to 4096 MiB while this device reports 2653, so
+    * without the clamp every container starts by promising memory that does not
+    * exist. Reporting less than exists is still allowed, which is what the knob
+    * was for. See docs/investigations/vram-overcommit-2026-08-12.md. */
+   if (wrapper_vmem_max_size > 0) {
+      VkDeviceSize requested = (VkDeviceSize)wrapper_vmem_max_size * 1048576;
+      if (requested < pMemoryProperties->memoryHeaps[0].size)
+         pMemoryProperties->memoryHeaps[0].size = requested;
+      else
+         WRAPPER_LOG(info, "Ignoring WRAPPER_VMEM_MAX_SIZE=%d MiB: heap is %llu MiB",
+                     wrapper_vmem_max_size,
+                     (unsigned long long)(pMemoryProperties->memoryHeaps[0].size >> 20));
+   }
 }
 
 VKAPI_ATTR void VKAPI_CALL                                                                                      
@@ -1056,6 +1072,14 @@ wrapper_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
    if (wrapper_vmem_max_size == -1)
       wrapper_vmem_max_size = getenv("WRAPPER_VMEM_MAX_SIZE") ? atoi(getenv("WRAPPER_VMEM_MAX_SIZE")) : 0;
 
-   if (wrapper_vmem_max_size > 0)
-      pMemoryProperties->memoryProperties.memoryHeaps[0].size = (VkDeviceSize)wrapper_vmem_max_size * 1048576;
+   /* Same clamp as the 1.0 entry point above; DXVK reads this one. */
+   if (wrapper_vmem_max_size > 0) {
+      VkDeviceSize requested = (VkDeviceSize)wrapper_vmem_max_size * 1048576;
+      VkDeviceSize *heap = &pMemoryProperties->memoryProperties.memoryHeaps[0].size;
+      if (requested < *heap)
+         *heap = requested;
+      else
+         WRAPPER_LOG(info, "Ignoring WRAPPER_VMEM_MAX_SIZE=%d MiB: heap is %llu MiB",
+                     wrapper_vmem_max_size, (unsigned long long)(*heap >> 20));
+   }
 }
