@@ -394,6 +394,19 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
                0 : 1;
          } else if (pdevice->driver_properties.driverID == VK_DRIVER_ID_MESA_TURNIP) {
             wrapper_emulate_bcn = 0;
+         } else if (pdevice->base_supported_features.textureCompressionBC) {
+            /* A driver that supports BC natively needs no emulation, whoever
+             * wrote it. Before this, only Qualcomm and Turnip were asked; every
+             * other driver transcoded BC to ASTC even when it could sample BC
+             * directly.
+             *
+             * On Tegra (driverID NVIDIA_PROPRIETARY, textureCompressionBC true)
+             * that cost a compute transcode per upload and doubled the memory
+             * of every BC1 image, since BC1 is 4 bpp and ASTC 4x4 is 8: a
+             * 256x256 BC1 image needed 32 KiB direct and 64 KiB wrapped.
+             * Measured in docs/investigations/tegra-probe-lab-2026-08-12.md.
+             */
+            wrapper_emulate_bcn = 0;
          }
       }
 
