@@ -1188,6 +1188,25 @@ wrapper_DestroyBuffer(VkDevice _device,
    VK_FROM_HANDLE(wrapper_device, device, _device);
 
    struct wrapper_buffer *wb = get_wrapper_buffer_from_handle(device, buffer);
+   WRAPPER_TRACE("DestroyBuffer request handle=%p tracked=%d",
+                 (void *)(uintptr_t)buffer, wb != NULL);
+   if (wb == NULL && buffer != VK_NULL_HANDLE &&
+       device->physical->driver_properties.driverID ==
+          VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+       getenv("WRAPPER_NVIDIA_DESTROY_MISS_FALLBACK") &&
+       atoi(getenv("WRAPPER_NVIDIA_DESTROY_MISS_FALLBACK")) != 0) {
+      /* Tegra keeps the underlying NvMap/nvgpu allocation alive until the
+       * driver's object is destroyed.  A wrapper bookkeeping miss used to
+       * silently swallow the application's destroy call here.  Keep this
+       * fallback opt-in until traces confirm the source of the miss; it is
+       * deliberately NVIDIA-only because forwarding an already-destroyed
+       * handle would be unsafe on the generic path. */
+      WRAPPER_LOG(error, "NVIDIA DestroyBuffer wrapper miss, forwarding raw handle=%p",
+                  (void *)(uintptr_t)buffer);
+      device->dispatch_table.DestroyBuffer(device->dispatch_handle, buffer,
+                                           pAllocator);
+      return;
+   }
    wrapper_buffer_destroy(device, wb, pAllocator);
 }
 
@@ -1390,6 +1409,19 @@ wrapper_DestroyImage(VkDevice _device,
    VK_FROM_HANDLE(wrapper_device, device, _device);
 
    struct wrapper_image *wi = get_wrapper_image_from_handle(device, image);
+   WRAPPER_TRACE("DestroyImage request handle=%p tracked=%d",
+                 (void *)(uintptr_t)image, wi != NULL);
+   if (wi == NULL && image != VK_NULL_HANDLE &&
+       device->physical->driver_properties.driverID ==
+          VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+       getenv("WRAPPER_NVIDIA_DESTROY_MISS_FALLBACK") &&
+       atoi(getenv("WRAPPER_NVIDIA_DESTROY_MISS_FALLBACK")) != 0) {
+      WRAPPER_LOG(error, "NVIDIA DestroyImage wrapper miss, forwarding raw handle=%p",
+                  (void *)(uintptr_t)image);
+      device->dispatch_table.DestroyImage(device->dispatch_handle, image,
+                                          pAllocator);
+      return;
+   }
    wrapper_image_destroy(device, wi, pAllocator);
 }
 
