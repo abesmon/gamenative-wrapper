@@ -51,6 +51,8 @@ struct wrapper_physical_device {
    struct vk_device_extension_table base_supported_extensions;
    bool nvidia_memory_budget_enabled;
    uint64_t nvidia_memory_budget_bytes;
+   bool nvidia_memory_limit_enabled;
+   uint64_t nvidia_memory_limit_bytes;
    uint64_t wrapper_memory_live_bytes;
    struct vk_physical_device_dispatch_table dispatch_table;
 };
@@ -79,6 +81,7 @@ struct wrapper_device {
    simple_mtx_t memory_ledger_mutex;
    struct list_head memory_ledger_allocations;
    bool memory_ledger_enabled;
+   bool memory_tracking_enabled;
    uint64_t memory_ledger_last_report_ns;
    uint64_t memory_alloc_count;
    uint64_t memory_free_count;
@@ -304,5 +307,7 @@ void wrapper_memory_ledger_unmap(struct wrapper_device *device,
                                  VkDeviceMemory handle);
 void wrapper_memory_ledger_image(struct wrapper_device *device, bool create);
 void wrapper_memory_ledger_buffer(struct wrapper_device *device, bool create);
+bool wrapper_memory_admit_allocation(struct wrapper_device *device,
+                                     VkDeviceSize size);
 
 #endif

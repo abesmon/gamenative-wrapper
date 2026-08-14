@@ -39,6 +39,9 @@ memory_ledger_find_locked(struct wrapper_device *device, VkDeviceMemory handle)
 static void
 memory_ledger_report_locked(struct wrapper_device *device, bool force)
 {
+   if (!device->memory_ledger_enabled)
+      return;
+
    uint64_t now = memory_ledger_now_ns();
    if (!force && now - device->memory_ledger_last_report_ns <
                     MEMORY_LEDGER_REPORT_NS)
@@ -73,6 +76,9 @@ wrapper_memory_ledger_init(struct wrapper_device *device)
    list_inithead(&device->memory_ledger_allocations);
    device->memory_ledger_enabled = getenv("WRAPPER_MEMORY_LEDGER") &&
       atoi(getenv("WRAPPER_MEMORY_LEDGER")) != 0;
+   device->memory_tracking_enabled = device->memory_ledger_enabled ||
+      device->physical->nvidia_memory_budget_enabled ||
+      device->physical->nvidia_memory_limit_enabled;
    device->memory_ledger_last_report_ns = memory_ledger_now_ns();
    if (device->memory_ledger_enabled)
       WRAPPER_LOG(info, "MEMLEDGER enabled interval=5s");
@@ -83,7 +89,7 @@ wrapper_memory_ledger_allocate(struct wrapper_device *device,
                                VkDeviceMemory handle,
                                VkDeviceSize size, bool placed)
 {
-   if (!device->memory_ledger_enabled || handle == VK_NULL_HANDLE)
+   if (!device->memory_tracking_enabled || handle == VK_NULL_HANDLE)
       return;
 
    struct wrapper_memory_ledger_entry *entry = calloc(1, sizeof(*entry));
@@ -115,7 +121,7 @@ wrapper_memory_ledger_allocate(struct wrapper_device *device,
 void
 wrapper_memory_ledger_free(struct wrapper_device *device, VkDeviceMemory handle)
 {
-   if (!device->memory_ledger_enabled || handle == VK_NULL_HANDLE)
+   if (!device->memory_tracking_enabled || handle == VK_NULL_HANDLE)
       return;
 
    simple_mtx_lock(&device->memory_ledger_mutex);
@@ -234,6 +240,28 @@ wrapper_memory_ledger_finish(struct wrapper_device *device)
    }
    simple_mtx_unlock(&device->memory_ledger_mutex);
    simple_mtx_destroy(&device->memory_ledger_mutex);
+}
+
+bool
+wrapper_memory_admit_allocation(struct wrapper_device *device,
+                                VkDeviceSize size)
+{
+   if (!device->physical->nvidia_memory_limit_enabled)
+      return true;
+
+   simple_mtx_lock(&device->memory_ledger_mutex);
+   const uint64_t live = device->memory_live_bytes;
+   const uint64_t limit = device->physical->nvidia_memory_limit_bytes;
+   const bool admitted = size <= limit && live <= limit - size;
+   simple_mtx_unlock(&device->memory_ledger_mutex);
+
+   if (!admitted) {
+      WRAPPER_LOG(info,
+         "MEMLIMIT reject size=%llu live=%llu limit=%llu result=VK_ERROR_OUT_OF_DEVICE_MEMORY",
+         (unsigned long long)size, (unsigned long long)live,
+         (unsigned long long)limit);
+   }
+   return admitted;
 }
 
 static int
@@ -739,6 +767,10 @@ wrapper_AllocateMemory(VkDevice _device,
    struct wrapper_device_memory *mem;
    VkResult result;
 
+   if (!wrapper_memory_admit_allocation(device,
+                                        pAllocateInfo->allocationSize))
+      return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
    VkMemoryPropertyFlags property_flags =
       device->physical->memory_properties.memoryTypes[
          pAllocateInfo->memoryTypeIndex].propertyFlags;
@@ -756,6 +788,11 @@ wrapper_AllocateMemory(VkDevice _device,
                     " export=1" : "",
                  vk_find_struct_const(pAllocateInfo, MEMORY_DEDICATED_ALLOCATE_INFO) ?
                     " dedicated=1" : "");
+
+   const VkMemoryPriorityAllocateInfoEXT *priority_info =
+      vk_find_struct_const(pAllocateInfo, MEMORY_PRIORITY_ALLOCATE_INFO_EXT);
+   if (priority_info)
+      WRAPPER_TRACE("AllocateMemory priority=%.3f", priority_info->priority);
 
    if (!(property_flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))
       goto fallback;

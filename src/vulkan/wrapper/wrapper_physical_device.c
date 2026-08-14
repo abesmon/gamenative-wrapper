@@ -284,6 +284,20 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
                      nvidia_budget);
       }
 
+      /* The Android Tegra ICD exposes a device-local heap backed by unified
+       * system RAM but has no memory-budget feedback. Keep this experimental
+       * admission limit NVIDIA-only: it makes allocation pressure observable
+       * to DXVK before Android's LMK has to kill the whole foreground app. */
+      const char *nvidia_limit = getenv("WRAPPER_NVIDIA_MEMORY_LIMIT");
+      if (pdevice->driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+          nvidia_limit && atoi(nvidia_limit) > 0) {
+         pdevice->nvidia_memory_limit_enabled = true;
+         pdevice->nvidia_memory_limit_bytes =
+            (uint64_t)atoi(nvidia_limit) * 1048576ull;
+         WRAPPER_LOG(info, "NVIDIA memory admission limit: %s MiB",
+                     nvidia_limit);
+      }
+
      WRAPPER_LOG(info, "GPU Name: %s", pdevice->properties2.properties.deviceName);
      WRAPPER_LOG(info, "Driver Version: %s", get_driver_version(pdevice->properties2.properties.driverVersion));
 
