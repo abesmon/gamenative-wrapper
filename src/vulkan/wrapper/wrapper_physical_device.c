@@ -308,6 +308,22 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
             "Sanitizing spoofed memory-priority allocation hints for NVIDIA");
       }
 
+      /* Tegra reports device-only and persistently mapped host-visible memory
+       * types in one large unified heap. DXVK therefore sizes both classes as
+       * if they had the whole heap available, although Android, Wine and the
+       * GPU compete for the same 4 GiB. An opt-in synthetic host heap changes
+       * allocator policy only; memory type indices passed to the ICD remain
+       * untouched. */
+      const char *host_heap = getenv("WRAPPER_NVIDIA_HOST_HEAP");
+      if (pdevice->driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+          host_heap && atoi(host_heap) > 0) {
+         pdevice->nvidia_host_heap_enabled = true;
+         pdevice->nvidia_host_heap_bytes =
+            (uint64_t)atoi(host_heap) * 1048576ull;
+         WRAPPER_LOG(info, "NVIDIA synthetic host-visible heap: %s MiB",
+                     host_heap);
+      }
+
      WRAPPER_LOG(info, "GPU Name: %s", pdevice->properties2.properties.deviceName);
      WRAPPER_LOG(info, "Driver Version: %s", get_driver_version(pdevice->properties2.properties.driverVersion));
 
@@ -1076,6 +1092,22 @@ wrapper_GetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice,
    pdevice->dispatch_table.GetPhysicalDeviceMemoryProperties(
       pdevice->dispatch_handle, pMemoryProperties);
 
+   if (pdevice->nvidia_host_heap_enabled &&
+       pMemoryProperties->memoryHeapCount == 1 &&
+       pMemoryProperties->memoryHeapCount < VK_MAX_MEMORY_HEAPS) {
+      const uint32_t host_heap = pMemoryProperties->memoryHeapCount++;
+      pMemoryProperties->memoryHeaps[host_heap] =
+         pMemoryProperties->memoryHeaps[0];
+      pMemoryProperties->memoryHeaps[host_heap].size = MIN2(
+         pMemoryProperties->memoryHeaps[host_heap].size,
+         pdevice->nvidia_host_heap_bytes);
+      for (uint32_t i = 0; i < pMemoryProperties->memoryTypeCount; i++) {
+         if (pMemoryProperties->memoryTypes[i].propertyFlags &
+             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+            pMemoryProperties->memoryTypes[i].heapIndex = host_heap;
+      }
+   }
+
    if (wrapper_vmem_max_size == -1)
       wrapper_vmem_max_size = getenv("WRAPPER_VMEM_MAX_SIZE") ? atoi(getenv("WRAPPER_VMEM_MAX_SIZE")) : 0;
 
@@ -1109,6 +1141,24 @@ wrapper_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
 
    pdevice->dispatch_table.GetPhysicalDeviceMemoryProperties2(
       pdevice->dispatch_handle, pMemoryProperties);
+
+   if (pdevice->nvidia_host_heap_enabled &&
+       pMemoryProperties->memoryProperties.memoryHeapCount == 1 &&
+       pMemoryProperties->memoryProperties.memoryHeapCount <
+          VK_MAX_MEMORY_HEAPS) {
+      VkPhysicalDeviceMemoryProperties *memory =
+         &pMemoryProperties->memoryProperties;
+      const uint32_t host_heap = memory->memoryHeapCount++;
+      memory->memoryHeaps[host_heap] = memory->memoryHeaps[0];
+      memory->memoryHeaps[host_heap].size = MIN2(
+         memory->memoryHeaps[host_heap].size,
+         pdevice->nvidia_host_heap_bytes);
+      for (uint32_t i = 0; i < memory->memoryTypeCount; i++) {
+         if (memory->memoryTypes[i].propertyFlags &
+             VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT)
+            memory->memoryTypes[i].heapIndex = host_heap;
+      }
+   }
 
    if (pdevice->nvidia_memory_budget_enabled) {
       vk_foreach_struct(prop, pMemoryProperties->pNext) {
