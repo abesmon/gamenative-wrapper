@@ -327,12 +327,19 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
       const char *dedicated_images =
          getenv("WRAPPER_NVIDIA_DEDICATED_IMAGES");
       if (pdevice->driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
-          dedicated_images && atoi(dedicated_images) > 0) {
-         pdevice->nvidia_dedicated_image_min_bytes =
-            (uint64_t)atoi(dedicated_images) * 1048576ull;
-         WRAPPER_LOG(info,
-            "Preferring NVIDIA dedicated image allocations from %s MiB",
-            dedicated_images);
+          dedicated_images &&
+          (!strcmp(dedicated_images, "all") || atoi(dedicated_images) > 0)) {
+         if (!strcmp(dedicated_images, "all")) {
+            pdevice->nvidia_dedicated_image_min_bytes = 1;
+            WRAPPER_LOG(info,
+               "Preferring dedicated allocations for all NVIDIA images");
+         } else {
+            pdevice->nvidia_dedicated_image_min_bytes =
+               (uint64_t)atoi(dedicated_images) * 1048576ull;
+            WRAPPER_LOG(info,
+               "Preferring NVIDIA dedicated image allocations from %s MiB",
+               dedicated_images);
+         }
       }
 
      WRAPPER_LOG(info, "GPU Name: %s", pdevice->properties2.properties.deviceName);
