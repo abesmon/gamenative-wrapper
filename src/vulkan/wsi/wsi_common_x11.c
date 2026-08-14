@@ -35,6 +35,7 @@
 #include <xcb/shm.h>
 
 #include "util/macros.h"
+#include "vulkan/wrapper/wrapper_log.h"
 #include <stdatomic.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -2343,6 +2344,13 @@ x11_image_finish(struct x11_swapchain *chain,
          }
       }
 #endif
+      /* Nothing else on the teardown path writes to this connection, so
+       * without this the frees above sit in the output buffer and are lost
+       * when the process exits -- leaving the server holding a pixmap and a
+       * fence for ids the next client will be given. */
+      xcb_flush(chain->conn);
+      WRAPPER_LOG(trace, "wsi/x11: released pixmap 0x%x and fence 0x%x",
+                  image->pixmap, image->sync_fence);
    }
 
    wsi_destroy_image(&chain->base, &image->base);
