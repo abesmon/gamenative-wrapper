@@ -12,6 +12,8 @@
 #include "vk_extensions.h"
 #include "vk_physical_device.h"
 #include "vk_util.h"
+
+#define NVIDIA_UNIFIED_DXVK_HEAP_MIB 768
 #include "wsi_common.h"
 #include "util/os_misc.h"
 
@@ -213,10 +215,11 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
        * Nothing leaks down to the base driver: the extension name is filtered
        * out by wrapper_filter_enabled_extensions (it is absent from
        * base_supported_extensions) and the feature struct is unlinked from the
-       * device pNext chain.  VkMemoryPriorityAllocateInfoEXT is left alone in
-       * vkAllocateMemory on purpose -- the spec requires every component to
-       * skip extending structures it does not know, so rebuilding the chain on
-       * a hot path would buy nothing. */
+       * device pNext chain.  Allocation priority structs are stripped before
+       * calling an NVIDIA ICD which does not expose the extension.  Older
+       * Android/Tegra drivers are the exact compatibility boundary this
+       * wrapper is meant to contain; do not rely on them tolerating an unknown
+       * allocation pNext structure on a hot and memory-sensitive path. */
       if (!pdevice->base_supported_extensions.EXT_memory_priority) {
          WRAPPER_LOG(info, "Faking VK_EXT_memory_priority");
          pdevice->vk.supported_extensions.EXT_memory_priority = true;
@@ -302,7 +305,7 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
          getenv("WRAPPER_NVIDIA_SANITIZE_MEMORY_PRIORITY");
       if (pdevice->driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
           !pdevice->base_supported_extensions.EXT_memory_priority &&
-          sanitize_priority && atoi(sanitize_priority) != 0) {
+          (!sanitize_priority || atoi(sanitize_priority) != 0)) {
          pdevice->nvidia_sanitize_memory_priority = true;
          WRAPPER_LOG(info,
             "Sanitizing spoofed memory-priority allocation hints for NVIDIA");
@@ -311,17 +314,24 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
       /* Tegra reports device-only and persistently mapped host-visible memory
        * types in one large unified heap. DXVK therefore sizes both classes as
        * if they had the whole heap available, although Android, Wine and the
-       * GPU compete for the same 4 GiB. An opt-in synthetic host heap changes
-       * allocator policy only; memory type indices passed to the ICD remain
-       * untouched. */
+       * GPU compete for the same 4 GiB. More importantly, Sarek charges a
+       * texture and its host-visible upload buffer to that one reported heap;
+       * it can reject the upload allocation before vkAllocateMemory even when
+       * the ICD successfully created and bound the image. Split accounting by
+       * default on the NVIDIA/no-memory-budget boundary. The 768 MiB sizes
+       * reduce Sarek pools to 32 MiB while leaving room for consecutive 64 MiB
+       * uploads. Memory type indices passed to the ICD remain untouched. */
       const char *host_heap = getenv("WRAPPER_NVIDIA_HOST_HEAP");
       if (pdevice->driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
-          host_heap && atoi(host_heap) > 0) {
+          !pdevice->base_supported_extensions.EXT_memory_budget &&
+          (!host_heap || atoi(host_heap) > 0)) {
          pdevice->nvidia_host_heap_enabled = true;
          pdevice->nvidia_host_heap_bytes =
-            (uint64_t)atoi(host_heap) * 1048576ull;
-         WRAPPER_LOG(info, "NVIDIA synthetic host-visible heap: %s MiB",
-                     host_heap);
+            (uint64_t)(host_heap ? atoi(host_heap) :
+                       NVIDIA_UNIFIED_DXVK_HEAP_MIB) * 1048576ull;
+         WRAPPER_LOG(info, "NVIDIA synthetic host-visible heap: %llu MiB",
+                     (unsigned long long)
+                        (pdevice->nvidia_host_heap_bytes >> 20));
       }
 
       const char *dedicated_images =
@@ -1105,8 +1115,6 @@ wrapper_GetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice,
 {
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
 
-   static int wrapper_vmem_max_size = -1;
-   
    pdevice->dispatch_table.GetPhysicalDeviceMemoryProperties(
       pdevice->dispatch_handle, pMemoryProperties);
 
@@ -1126,8 +1134,13 @@ wrapper_GetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice,
       }
    }
 
-   if (wrapper_vmem_max_size == -1)
-      wrapper_vmem_max_size = getenv("WRAPPER_VMEM_MAX_SIZE") ? atoi(getenv("WRAPPER_VMEM_MAX_SIZE")) : 0;
+   const char *vmem_override = getenv("WRAPPER_VMEM_MAX_SIZE");
+   const int wrapper_vmem_max_size = vmem_override
+      ? atoi(vmem_override)
+      : (pdevice->driver_properties.driverID ==
+            VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+         !pdevice->base_supported_extensions.EXT_memory_budget
+            ? NVIDIA_UNIFIED_DXVK_HEAP_MIB : 0);
 
    /* The override may lower the reported heap, never raise it.
     *
@@ -1154,8 +1167,6 @@ wrapper_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
                                            VkPhysicalDeviceMemoryProperties2 *pMemoryProperties)
 {
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
-
-   static int wrapper_vmem_max_size = -1;
 
    pdevice->dispatch_table.GetPhysicalDeviceMemoryProperties2(
       pdevice->dispatch_handle, pMemoryProperties);
@@ -1202,8 +1213,13 @@ wrapper_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
       }
    }
 
-   if (wrapper_vmem_max_size == -1)
-      wrapper_vmem_max_size = getenv("WRAPPER_VMEM_MAX_SIZE") ? atoi(getenv("WRAPPER_VMEM_MAX_SIZE")) : 0;
+   const char *vmem_override = getenv("WRAPPER_VMEM_MAX_SIZE");
+   const int wrapper_vmem_max_size = vmem_override
+      ? atoi(vmem_override)
+      : (pdevice->driver_properties.driverID ==
+            VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+         !pdevice->base_supported_extensions.EXT_memory_budget
+            ? NVIDIA_UNIFIED_DXVK_HEAP_MIB : 0);
 
    /* Same clamp as the 1.0 entry point above; DXVK reads this one. */
    if (wrapper_vmem_max_size > 0) {

@@ -1192,6 +1192,29 @@ wrapper_GetImageMemoryRequirements2(
                                                        pInfo,
                                                        pMemoryRequirements);
 
+   const VkMemoryRequirements *requirements =
+      &pMemoryRequirements->memoryRequirements;
+   WRAPPER_TRACE(
+      "GetImageMemoryRequirements2 image=%p size=%llu alignment=%llu types=0x%x",
+      (void *)(uintptr_t)pInfo->image,
+      (unsigned long long)requirements->size,
+      (unsigned long long)requirements->alignment,
+      requirements->memoryTypeBits);
+
+   vk_foreach_struct(requirement, pMemoryRequirements->pNext) {
+      if (requirement->sType !=
+          VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS)
+         continue;
+
+      const VkMemoryDedicatedRequirements *dedicated =
+         (const VkMemoryDedicatedRequirements *)requirement;
+      WRAPPER_TRACE(
+         "GetImageMemoryRequirements2 dedicated image=%p prefers=%d requires=%d",
+         (void *)(uintptr_t)pInfo->image,
+         dedicated->prefersDedicatedAllocation,
+         dedicated->requiresDedicatedAllocation);
+   }
+
    const uint64_t threshold =
       device->physical->nvidia_dedicated_image_min_bytes;
    if (!threshold || pMemoryRequirements->memoryRequirements.size < threshold)
@@ -1211,6 +1234,46 @@ wrapper_GetImageMemoryRequirements2(
          (unsigned long long)pMemoryRequirements->memoryRequirements.size,
          (unsigned long long)threshold);
    }
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+wrapper_BindImageMemory(VkDevice _device,
+                        VkImage image,
+                        VkDeviceMemory memory,
+                        VkDeviceSize memoryOffset)
+{
+   VK_FROM_HANDLE(wrapper_device, device, _device);
+   WRAPPER_TRACE("BindImageMemory request image=%p memory=%p offset=%llu",
+                 (void *)(uintptr_t)image, (void *)(uintptr_t)memory,
+                 (unsigned long long)memoryOffset);
+   VkResult result = device->dispatch_table.BindImageMemory(
+      device->dispatch_handle, image, memory, memoryOffset);
+   WRAPPER_TRACE("BindImageMemory result %d image=%p", result,
+                 (void *)(uintptr_t)image);
+   if (result != VK_SUCCESS)
+      WRAPPER_LOG(error, "Failed to bind image memory, res %d", result);
+   return result;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+wrapper_BindImageMemory2(VkDevice _device,
+                         uint32_t bindInfoCount,
+                         const VkBindImageMemoryInfo *pBindInfos)
+{
+   VK_FROM_HANDLE(wrapper_device, device, _device);
+   for (uint32_t i = 0; i < bindInfoCount; i++) {
+      WRAPPER_TRACE(
+         "BindImageMemory2 request index=%u image=%p memory=%p offset=%llu",
+         i, (void *)(uintptr_t)pBindInfos[i].image,
+         (void *)(uintptr_t)pBindInfos[i].memory,
+         (unsigned long long)pBindInfos[i].memoryOffset);
+   }
+   VkResult result = device->dispatch_table.BindImageMemory2(
+      device->dispatch_handle, bindInfoCount, pBindInfos);
+   WRAPPER_TRACE("BindImageMemory2 result %d count=%u", result, bindInfoCount);
+   if (result != VK_SUCCESS)
+      WRAPPER_LOG(error, "Failed to bind image memory2, res %d", result);
+   return result;
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -1425,8 +1488,21 @@ wrapper_CreateImageView(VkDevice _device,
       create_info.format = get_format_for_bcn(pCreateInfo->format);
    }
 
+   WRAPPER_TRACE(
+      "CreateImageView request image=%p type=%d format=%s levels=%u+%u layers=%u+%u",
+      (void *)(uintptr_t)pCreateInfo->image, pCreateInfo->viewType,
+      wrapper_trace_format_name(create_info.format),
+      pCreateInfo->subresourceRange.baseMipLevel,
+      pCreateInfo->subresourceRange.levelCount,
+      pCreateInfo->subresourceRange.baseArrayLayer,
+      pCreateInfo->subresourceRange.layerCount);
+
    result = device->dispatch_table.CreateImageView(device->dispatch_handle,
      &create_info, pAllocator, pView);
+
+   WRAPPER_TRACE("CreateImageView result %d image=%p format=%s", result,
+                 (void *)(uintptr_t)pCreateInfo->image,
+                 wrapper_trace_format_name(create_info.format));
 
    if (result != VK_SUCCESS)
    	  WRAPPER_LOG(error, "Failed to create image view, res %d", result);   	  
