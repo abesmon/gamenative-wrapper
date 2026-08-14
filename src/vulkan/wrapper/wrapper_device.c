@@ -1181,6 +1181,39 @@ wrapper_BindBufferMemory2(VkDevice _device,
 }
 
 VKAPI_ATTR void VKAPI_CALL
+wrapper_GetImageMemoryRequirements2(
+   VkDevice _device,
+   const VkImageMemoryRequirementsInfo2 *pInfo,
+   VkMemoryRequirements2 *pMemoryRequirements)
+{
+   VK_FROM_HANDLE(wrapper_device, device, _device);
+
+   device->dispatch_table.GetImageMemoryRequirements2(device->dispatch_handle,
+                                                       pInfo,
+                                                       pMemoryRequirements);
+
+   const uint64_t threshold =
+      device->physical->nvidia_dedicated_image_min_bytes;
+   if (!threshold || pMemoryRequirements->memoryRequirements.size < threshold)
+      return;
+
+   vk_foreach_struct(requirement, pMemoryRequirements->pNext) {
+      if (requirement->sType !=
+          VK_STRUCTURE_TYPE_MEMORY_DEDICATED_REQUIREMENTS)
+         continue;
+
+      VkMemoryDedicatedRequirements *dedicated =
+         (VkMemoryDedicatedRequirements *)requirement;
+      dedicated->prefersDedicatedAllocation = VK_TRUE;
+      WRAPPER_TRACE(
+         "NVIDIA prefer dedicated image=%p size=%llu threshold=%llu",
+         (void *)(uintptr_t)pInfo->image,
+         (unsigned long long)pMemoryRequirements->memoryRequirements.size,
+         (unsigned long long)threshold);
+   }
+}
+
+VKAPI_ATTR void VKAPI_CALL
 wrapper_DestroyBuffer(VkDevice _device,
 					  VkBuffer buffer,
 					  const VkAllocationCallbacks *pAllocator)
