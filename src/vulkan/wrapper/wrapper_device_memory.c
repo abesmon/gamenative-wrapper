@@ -13,6 +13,223 @@
 #include <linux/dma-heap.h>
 #include <fcntl.h>
 #include <errno.h>
+#include <time.h>
+
+#define MEMORY_LEDGER_REPORT_NS (5ull * 1000ull * 1000ull * 1000ull)
+
+static uint64_t
+memory_ledger_now_ns(void)
+{
+   struct timespec now;
+   clock_gettime(CLOCK_MONOTONIC, &now);
+   return (uint64_t)now.tv_sec * 1000000000ull + now.tv_nsec;
+}
+
+static struct wrapper_memory_ledger_entry *
+memory_ledger_find_locked(struct wrapper_device *device, VkDeviceMemory handle)
+{
+   list_for_each_entry(struct wrapper_memory_ledger_entry, entry,
+                       &device->memory_ledger_allocations, link) {
+      if (entry->handle == handle)
+         return entry;
+   }
+   return NULL;
+}
+
+static void
+memory_ledger_report_locked(struct wrapper_device *device, bool force)
+{
+   uint64_t now = memory_ledger_now_ns();
+   if (!force && now - device->memory_ledger_last_report_ns <
+                    MEMORY_LEDGER_REPORT_NS)
+      return;
+
+   device->memory_ledger_last_report_ns = now;
+   WRAPPER_LOG(info,
+      "MEMLEDGER device=%p live=%llu peak=%llu placed=%llu driver=%llu mapped=%llu "
+      "mapped_peak=%llu alloc=%llu free=%llu map=%llu unmap=%llu "
+      "images=%llu/%llu buffers=%llu/%llu",
+      (void *)device,
+      (unsigned long long)device->memory_live_bytes,
+      (unsigned long long)device->memory_peak_bytes,
+      (unsigned long long)device->memory_placed_live_bytes,
+      (unsigned long long)device->memory_driver_live_bytes,
+      (unsigned long long)device->memory_mapped_bytes,
+      (unsigned long long)device->memory_peak_mapped_bytes,
+      (unsigned long long)device->memory_alloc_count,
+      (unsigned long long)device->memory_free_count,
+      (unsigned long long)device->memory_map_count,
+      (unsigned long long)device->memory_unmap_count,
+      (unsigned long long)device->image_create_count,
+      (unsigned long long)device->image_destroy_count,
+      (unsigned long long)device->buffer_create_count,
+      (unsigned long long)device->buffer_destroy_count);
+}
+
+void
+wrapper_memory_ledger_init(struct wrapper_device *device)
+{
+   simple_mtx_init(&device->memory_ledger_mutex, mtx_plain);
+   list_inithead(&device->memory_ledger_allocations);
+   device->memory_ledger_enabled = getenv("WRAPPER_MEMORY_LEDGER") &&
+      atoi(getenv("WRAPPER_MEMORY_LEDGER")) != 0;
+   device->memory_ledger_last_report_ns = memory_ledger_now_ns();
+   if (device->memory_ledger_enabled)
+      WRAPPER_LOG(info, "MEMLEDGER enabled interval=5s");
+}
+
+void
+wrapper_memory_ledger_allocate(struct wrapper_device *device,
+                               VkDeviceMemory handle,
+                               VkDeviceSize size, bool placed)
+{
+   if (!device->memory_ledger_enabled || handle == VK_NULL_HANDLE)
+      return;
+
+   struct wrapper_memory_ledger_entry *entry = calloc(1, sizeof(*entry));
+   if (!entry) {
+      WRAPPER_LOG(error, "MEMLEDGER cannot record allocation size=%llu",
+                  (unsigned long long)size);
+      return;
+   }
+   entry->handle = handle;
+   entry->size = size;
+   entry->placed = placed;
+
+   simple_mtx_lock(&device->memory_ledger_mutex);
+   list_add(&entry->link, &device->memory_ledger_allocations);
+   device->memory_alloc_count++;
+   device->memory_live_bytes += size;
+   if (placed)
+      device->memory_placed_live_bytes += size;
+   else
+      device->memory_driver_live_bytes += size;
+   if (device->memory_live_bytes > device->memory_peak_bytes)
+      device->memory_peak_bytes = device->memory_live_bytes;
+   memory_ledger_report_locked(device, false);
+   simple_mtx_unlock(&device->memory_ledger_mutex);
+}
+
+void
+wrapper_memory_ledger_free(struct wrapper_device *device, VkDeviceMemory handle)
+{
+   if (!device->memory_ledger_enabled || handle == VK_NULL_HANDLE)
+      return;
+
+   simple_mtx_lock(&device->memory_ledger_mutex);
+   struct wrapper_memory_ledger_entry *entry =
+      memory_ledger_find_locked(device, handle);
+   if (!entry) {
+      WRAPPER_LOG(error, "MEMLEDGER free of untracked memory=%p", handle);
+      simple_mtx_unlock(&device->memory_ledger_mutex);
+      return;
+   }
+
+   device->memory_free_count++;
+   device->memory_live_bytes -= entry->size;
+   if (entry->placed)
+      device->memory_placed_live_bytes -= entry->size;
+   else
+      device->memory_driver_live_bytes -= entry->size;
+   if (entry->mapped_size) {
+      device->memory_mapped_bytes -= entry->mapped_size;
+      device->memory_unmap_count++;
+   }
+   list_del(&entry->link);
+   free(entry);
+   memory_ledger_report_locked(device, false);
+   simple_mtx_unlock(&device->memory_ledger_mutex);
+}
+
+void
+wrapper_memory_ledger_map(struct wrapper_device *device, VkDeviceMemory handle,
+                          VkDeviceSize size)
+{
+   if (!device->memory_ledger_enabled || handle == VK_NULL_HANDLE)
+      return;
+
+   simple_mtx_lock(&device->memory_ledger_mutex);
+   struct wrapper_memory_ledger_entry *entry =
+      memory_ledger_find_locked(device, handle);
+   if (entry && entry->mapped_size == 0) {
+      if (size == VK_WHOLE_SIZE)
+         size = entry->size;
+      entry->mapped_size = size;
+      device->memory_mapped_bytes += size;
+      device->memory_map_count++;
+      if (device->memory_mapped_bytes > device->memory_peak_mapped_bytes)
+         device->memory_peak_mapped_bytes = device->memory_mapped_bytes;
+   }
+   memory_ledger_report_locked(device, false);
+   simple_mtx_unlock(&device->memory_ledger_mutex);
+}
+
+void
+wrapper_memory_ledger_unmap(struct wrapper_device *device,
+                            VkDeviceMemory handle)
+{
+   if (!device->memory_ledger_enabled || handle == VK_NULL_HANDLE)
+      return;
+
+   simple_mtx_lock(&device->memory_ledger_mutex);
+   struct wrapper_memory_ledger_entry *entry =
+      memory_ledger_find_locked(device, handle);
+   if (entry && entry->mapped_size) {
+      device->memory_mapped_bytes -= entry->mapped_size;
+      entry->mapped_size = 0;
+      device->memory_unmap_count++;
+   }
+   memory_ledger_report_locked(device, false);
+   simple_mtx_unlock(&device->memory_ledger_mutex);
+}
+
+static void
+wrapper_memory_ledger_resource(struct wrapper_device *device, bool image,
+                               bool create)
+{
+   if (!device->memory_ledger_enabled)
+      return;
+
+   simple_mtx_lock(&device->memory_ledger_mutex);
+   if (image) {
+      if (create) device->image_create_count++;
+      else device->image_destroy_count++;
+   } else {
+      if (create) device->buffer_create_count++;
+      else device->buffer_destroy_count++;
+   }
+   memory_ledger_report_locked(device, false);
+   simple_mtx_unlock(&device->memory_ledger_mutex);
+}
+
+void
+wrapper_memory_ledger_image(struct wrapper_device *device, bool create)
+{
+   wrapper_memory_ledger_resource(device, true, create);
+}
+
+void
+wrapper_memory_ledger_buffer(struct wrapper_device *device, bool create)
+{
+   wrapper_memory_ledger_resource(device, false, create);
+}
+
+void
+wrapper_memory_ledger_finish(struct wrapper_device *device)
+{
+   simple_mtx_lock(&device->memory_ledger_mutex);
+   if (device->memory_ledger_enabled) {
+      WRAPPER_LOG(info, "MEMLEDGER final");
+      memory_ledger_report_locked(device, true);
+   }
+   list_for_each_entry_safe(struct wrapper_memory_ledger_entry, entry,
+                            &device->memory_ledger_allocations, link) {
+      list_del(&entry->link);
+      free(entry);
+   }
+   simple_mtx_unlock(&device->memory_ledger_mutex);
+   simple_mtx_destroy(&device->memory_ledger_mutex);
+}
 
 static int
 safe_ioctl(int fd, unsigned long request, void *arg)
@@ -666,6 +883,9 @@ wrapper_AllocateMemory(VkDevice _device,
 
 out:
    simple_mtx_unlock(&device->resource_mutex);
+   if (result == VK_SUCCESS)
+      wrapper_memory_ledger_allocate(device, *pMemory,
+                                     pAllocateInfo->allocationSize, true);
    WRAPPER_TRACE("AllocateMemory result %d path=placed backend=%s", result,
                  device->physical->resource_type);
    return result;
@@ -673,6 +893,9 @@ out:
 fallback:
    result = device->dispatch_table.AllocateMemory(device->dispatch_handle,
       pAllocateInfo, pAllocator, pMemory);
+   if (result == VK_SUCCESS)
+      wrapper_memory_ledger_allocate(device, *pMemory,
+                                     pAllocateInfo->allocationSize, false);
    WRAPPER_TRACE("AllocateMemory result %d path=driver", result);
    return result;
 }
@@ -684,6 +907,7 @@ wrapper_FreeMemory(VkDevice _device, VkDeviceMemory _memory,
    VK_FROM_HANDLE(wrapper_device, device, _device);
    struct wrapper_device_memory *mem;
 
+   wrapper_memory_ledger_free(device, _memory);
    mem = wrapper_device_memory_from_handle(device, _memory);
    if (mem) {
       mem->alloc = pAllocator;
@@ -712,9 +936,13 @@ wrapper_MapMemory2KHR(VkDevice _device,
    
    mem = wrapper_device_memory_from_handle(device, pMemoryMapInfo->memory);
    if (!placed_info || !mem) {
-      return device->dispatch_table.MapMemory(device->dispatch_handle,
+      result = device->dispatch_table.MapMemory(device->dispatch_handle,
          pMemoryMapInfo->memory, pMemoryMapInfo->offset, pMemoryMapInfo->size,
             0, ppData);
+      if (result == VK_SUCCESS)
+         wrapper_memory_ledger_map(device, pMemoryMapInfo->memory,
+                                   pMemoryMapInfo->size);
+      return result;
    }
 
    WRAPPER_LOG(info, "Emulating vkMapMemory2KHR");
@@ -794,6 +1022,8 @@ wrapper_MapMemory2KHR(VkDevice _device,
    out:
       simple_mtx_unlock(&device->resource_mutex);
       *ppData = (char *)mem->map_address + pMemoryMapInfo->offset;
+      wrapper_memory_ledger_map(device, pMemoryMapInfo->memory,
+                                mem->map_size);
       return VK_SUCCESS;
    fail:
       simple_mtx_unlock(&device->resource_mutex);
@@ -816,6 +1046,7 @@ wrapper_UnmapMemory2KHR(VkDevice _device,
    if (!mem) {
       device->dispatch_table.UnmapMemory(device->dispatch_handle,
          pMemoryUnmapInfo->memory);
+      wrapper_memory_ledger_unmap(device, pMemoryUnmapInfo->memory);
       return VK_SUCCESS;
    }
 
@@ -834,5 +1065,6 @@ wrapper_UnmapMemory2KHR(VkDevice _device,
 
    mem->map_size = 0;
    mem->map_address = NULL;
+   wrapper_memory_ledger_unmap(device, pMemoryUnmapInfo->memory);
    return VK_SUCCESS;
 }

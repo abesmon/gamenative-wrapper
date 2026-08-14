@@ -863,6 +863,8 @@ wrapper_CreateDevice(VkPhysicalDevice physicalDevice,
       return vk_error(physical_device, result);
    }
 
+   wrapper_memory_ledger_init(device);
+
    wrapper_filter_enabled_extensions(device,
       &wrapper_enable_extension_count, wrapper_enable_extensions);
    wrapper_append_required_extensions(&device->vk,
@@ -1033,6 +1035,8 @@ wrapper_buffer_destroy(struct wrapper_device *device,
    if (wb == NULL)
       return;
 
+   wrapper_memory_ledger_buffer(device, false);
+
    simple_mtx_lock(&device->resource_mutex);
       
    device->dispatch_table.DestroyBuffer(device->dispatch_handle,
@@ -1091,6 +1095,8 @@ wrapper_CreateBuffer(VkDevice _device,
       WRAPPER_LOG(error, "Failed to create buffer, res %d", res);
       return res;
    }
+
+   wrapper_memory_ledger_buffer(device, true);
 
    simple_mtx_lock(&device->resource_mutex);
 
@@ -1193,6 +1199,8 @@ wrapper_image_destroy(struct wrapper_device *device,
    if (wi == NULL)
       return;
 
+   wrapper_memory_ledger_image(device, false);
+
    simple_mtx_lock(&device->resource_mutex);
       
    device->dispatch_table.DestroyImage(device->dispatch_handle,
@@ -1292,6 +1300,8 @@ wrapper_CreateImage(VkDevice _device,
       WRAPPER_LOG(error, "Failed to create image, res %d", res);
       return res;
    }
+
+   wrapper_memory_ledger_image(device, true);
 
    simple_mtx_lock(&device->resource_mutex);
 
@@ -3117,6 +3127,7 @@ wrapper_DestroyDevice(VkDevice _device, const VkAllocationCallbacks* pAllocator)
       _mesa_hash_table_u64_destroy(device->push_template_table);
       simple_mtx_destroy(&device->push_mutex);
    }
+   wrapper_memory_ledger_finish(device);
    simple_mtx_destroy(&device->resource_mutex);
    simple_mtx_destroy(&device->query_reset_mutex);
    vk_device_finish(&device->vk);

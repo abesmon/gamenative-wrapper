@@ -69,6 +69,27 @@ struct wrapper_device {
 
    VkDevice dispatch_handle;
    simple_mtx_t resource_mutex;
+   /* Diagnostic-only live allocation ledger. It is enabled explicitly with
+    * WRAPPER_MEMORY_LEDGER=1 and has its own lock so placed allocations can be
+    * recorded while resource_mutex is held. */
+   simple_mtx_t memory_ledger_mutex;
+   struct list_head memory_ledger_allocations;
+   bool memory_ledger_enabled;
+   uint64_t memory_ledger_last_report_ns;
+   uint64_t memory_alloc_count;
+   uint64_t memory_free_count;
+   uint64_t memory_live_bytes;
+   uint64_t memory_peak_bytes;
+   uint64_t memory_placed_live_bytes;
+   uint64_t memory_driver_live_bytes;
+   uint64_t memory_mapped_bytes;
+   uint64_t memory_peak_mapped_bytes;
+   uint64_t memory_map_count;
+   uint64_t memory_unmap_count;
+   uint64_t image_create_count;
+   uint64_t image_destroy_count;
+   uint64_t buffer_create_count;
+   uint64_t buffer_destroy_count;
    struct list_head command_buffer_list;
    struct list_head device_memory_list;
    struct list_head buffer_list;
@@ -221,6 +242,14 @@ struct wrapper_device_memory {
    const VkAllocationCallbacks *alloc;
 };
 
+struct wrapper_memory_ledger_entry {
+   struct list_head link;
+   VkDeviceMemory handle;
+   VkDeviceSize size;
+   VkDeviceSize mapped_size;
+   bool placed;
+};
+
 /* Records kept for push-descriptor emulation, keyed by the driver handle. */
 struct wrapper_push_dsl {              /* per VkDescriptorSetLayout */
    bool is_push;
@@ -257,5 +286,19 @@ wrapper_device_memory_create(struct wrapper_device *device,
 
 void
 wrapper_device_memory_destroy(struct wrapper_device_memory *mem);
+
+void wrapper_memory_ledger_init(struct wrapper_device *device);
+void wrapper_memory_ledger_finish(struct wrapper_device *device);
+void wrapper_memory_ledger_allocate(struct wrapper_device *device,
+                                    VkDeviceMemory handle,
+                                    VkDeviceSize size, bool placed);
+void wrapper_memory_ledger_free(struct wrapper_device *device,
+                                VkDeviceMemory handle);
+void wrapper_memory_ledger_map(struct wrapper_device *device,
+                               VkDeviceMemory handle, VkDeviceSize size);
+void wrapper_memory_ledger_unmap(struct wrapper_device *device,
+                                 VkDeviceMemory handle);
+void wrapper_memory_ledger_image(struct wrapper_device *device, bool create);
+void wrapper_memory_ledger_buffer(struct wrapper_device *device, bool create);
 
 #endif
