@@ -298,6 +298,16 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
                      nvidia_limit);
       }
 
+      const char *sanitize_priority =
+         getenv("WRAPPER_NVIDIA_SANITIZE_MEMORY_PRIORITY");
+      if (pdevice->driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+          !pdevice->base_supported_extensions.EXT_memory_priority &&
+          sanitize_priority && atoi(sanitize_priority) != 0) {
+         pdevice->nvidia_sanitize_memory_priority = true;
+         WRAPPER_LOG(info,
+            "Sanitizing spoofed memory-priority allocation hints for NVIDIA");
+      }
+
      WRAPPER_LOG(info, "GPU Name: %s", pdevice->properties2.properties.deviceName);
      WRAPPER_LOG(info, "Driver Version: %s", get_driver_version(pdevice->properties2.properties.driverVersion));
 

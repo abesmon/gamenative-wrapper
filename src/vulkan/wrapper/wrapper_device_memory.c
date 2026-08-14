@@ -3,6 +3,7 @@
 #include "wrapper_trace.h"
 #include "wrapper_entrypoints.h"
 #include "vk_common_entrypoints.h"
+#include "vk_enum_to_str.h"
 #include "util/os_file.h"
 #include "vk_util.h"
 
@@ -474,6 +475,51 @@ unlink_memory_alloc_info_pnext(VkMemoryAllocateInfo *alloc_info, VkStructureType
    }
 }
 
+static void
+free_memory_allocate_chain(VkBaseOutStructure *chain)
+{
+   while (chain) {
+      VkBaseOutStructure *next = chain->pNext;
+      free(chain);
+      chain = next;
+   }
+}
+
+static bool
+clone_memory_allocate_chain_without_priority(const void *pNext,
+                                              VkBaseOutStructure **out_chain)
+{
+   VkBaseOutStructure *head = NULL;
+   VkBaseOutStructure *tail = NULL;
+
+   vk_foreach_struct_const(item, pNext) {
+      if (item->sType == VK_STRUCTURE_TYPE_MEMORY_PRIORITY_ALLOCATE_INFO_EXT)
+         continue;
+
+      const size_t size = vk_structure_type_size(item);
+      if (!size) {
+         free_memory_allocate_chain(head);
+         return false;
+      }
+
+      VkBaseOutStructure *copy = malloc(size);
+      if (!copy) {
+         free_memory_allocate_chain(head);
+         return false;
+      }
+      memcpy(copy, item, size);
+      copy->pNext = NULL;
+      if (tail)
+         tail->pNext = copy;
+      else
+         head = copy;
+      tail = copy;
+   }
+
+   *out_chain = head;
+   return true;
+}
+
 static VkResult check_dedicated_allocate_info_for(struct wrapper_device *device,
                                               const VkMemoryDedicatedAllocateInfo *memory_dedicated_info,
                                               VkExternalMemoryHandleTypeFlags handle_types) {
@@ -766,10 +812,28 @@ wrapper_AllocateMemory(VkDevice _device,
    VK_FROM_HANDLE(wrapper_device, device, _device);
    struct wrapper_device_memory *mem;
    VkResult result;
+   VkMemoryAllocateInfo sanitized_allocate_info;
+   VkBaseOutStructure *sanitized_chain = NULL;
 
    if (!wrapper_memory_admit_allocation(device,
                                         pAllocateInfo->allocationSize))
       return vk_error(device, VK_ERROR_OUT_OF_DEVICE_MEMORY);
+
+   const VkMemoryPriorityAllocateInfoEXT *priority_info =
+      vk_find_struct_const(pAllocateInfo, MEMORY_PRIORITY_ALLOCATE_INFO_EXT);
+   if (priority_info && device->physical->nvidia_sanitize_memory_priority) {
+      if (clone_memory_allocate_chain_without_priority(pAllocateInfo->pNext,
+                                                       &sanitized_chain)) {
+         sanitized_allocate_info = *pAllocateInfo;
+         sanitized_allocate_info.pNext = sanitized_chain;
+         pAllocateInfo = &sanitized_allocate_info;
+         WRAPPER_TRACE("AllocateMemory removed unsupported NVIDIA priority=%.3f",
+                       priority_info->priority);
+      } else {
+         WRAPPER_LOG(error,
+            "Failed to clone allocation pNext; retaining memory-priority hint");
+      }
+   }
 
    VkMemoryPropertyFlags property_flags =
       device->physical->memory_properties.memoryTypes[
@@ -789,8 +853,6 @@ wrapper_AllocateMemory(VkDevice _device,
                  vk_find_struct_const(pAllocateInfo, MEMORY_DEDICATED_ALLOCATE_INFO) ?
                     " dedicated=1" : "");
 
-   const VkMemoryPriorityAllocateInfoEXT *priority_info =
-      vk_find_struct_const(pAllocateInfo, MEMORY_PRIORITY_ALLOCATE_INFO_EXT);
    if (priority_info)
       WRAPPER_TRACE("AllocateMemory priority=%.3f", priority_info->priority);
 
@@ -930,6 +992,7 @@ out:
                                      pAllocateInfo->allocationSize, true);
    WRAPPER_TRACE("AllocateMemory result %d path=placed backend=%s", result,
                  device->physical->resource_type);
+   free_memory_allocate_chain(sanitized_chain);
    return result;
 
 fallback:
@@ -939,6 +1002,7 @@ fallback:
       wrapper_memory_ledger_allocate(device, *pMemory,
                                      pAllocateInfo->allocationSize, false);
    WRAPPER_TRACE("AllocateMemory result %d path=driver", result);
+   free_memory_allocate_chain(sanitized_chain);
    return result;
 }
 

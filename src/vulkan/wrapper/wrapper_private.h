@@ -53,6 +53,7 @@ struct wrapper_physical_device {
    uint64_t nvidia_memory_budget_bytes;
    bool nvidia_memory_limit_enabled;
    uint64_t nvidia_memory_limit_bytes;
+   bool nvidia_sanitize_memory_priority;
    uint64_t wrapper_memory_live_bytes;
    struct vk_physical_device_dispatch_table dispatch_table;
 };
