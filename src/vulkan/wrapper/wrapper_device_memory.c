@@ -100,6 +100,8 @@ wrapper_memory_ledger_allocate(struct wrapper_device *device,
    list_add(&entry->link, &device->memory_ledger_allocations);
    device->memory_alloc_count++;
    device->memory_live_bytes += size;
+   if (device->physical->nvidia_memory_budget_enabled)
+      p_atomic_add(&device->physical->wrapper_memory_live_bytes, size);
    if (placed)
       device->memory_placed_live_bytes += size;
    else
@@ -127,6 +129,9 @@ wrapper_memory_ledger_free(struct wrapper_device *device, VkDeviceMemory handle)
 
    device->memory_free_count++;
    device->memory_live_bytes -= entry->size;
+   if (device->physical->nvidia_memory_budget_enabled)
+      p_atomic_add(&device->physical->wrapper_memory_live_bytes,
+                   (uint64_t)(0 - entry->size));
    if (entry->placed)
       device->memory_placed_live_bytes -= entry->size;
    else

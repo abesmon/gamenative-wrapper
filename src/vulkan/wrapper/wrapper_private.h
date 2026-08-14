@@ -14,6 +14,7 @@
 #include "vulkan/wsi/wsi_common.h"
 #include "util/simple_mtx.h"
 #include "util/hash_table.h"
+#include "util/u_atomic.h"
 
 /* Limit advertised for emulated VK_KHR_push_descriptor. 32 is the common
  * hardware value and comfortably covers what vkd3d/DXVK push. */
@@ -48,6 +49,9 @@ struct wrapper_physical_device {
    struct wrapper_instance *instance;
    struct vk_features base_supported_features;
    struct vk_device_extension_table base_supported_extensions;
+   bool nvidia_memory_budget_enabled;
+   uint64_t nvidia_memory_budget_bytes;
+   uint64_t wrapper_memory_live_bytes;
    struct vk_physical_device_dispatch_table dispatch_table;
 };
 

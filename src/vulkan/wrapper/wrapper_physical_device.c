@@ -267,6 +267,23 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
       pdevice->dispatch_table.GetPhysicalDeviceMemoryProperties(
          pdevice->dispatch_handle, &pdevice->memory_properties);
 
+      /* NVIDIA's Android/Tegra ICD exposes neither EXT_memory_budget nor a
+       * useful pressure signal to DXVK. Other mobile drivers therefore enter
+       * DXVK's eviction path while Tegra keeps allocating unified system
+       * memory until Android kills the process. Keep this workaround opt-in
+       * while it is being validated on the Switch-specific wrapper+ICD pair. */
+      const char *nvidia_budget = getenv("WRAPPER_NVIDIA_MEMORY_BUDGET");
+      if (pdevice->driver_properties.driverID == VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+          !pdevice->base_supported_extensions.EXT_memory_budget &&
+          nvidia_budget && atoi(nvidia_budget) > 0) {
+         pdevice->nvidia_memory_budget_enabled = true;
+         pdevice->nvidia_memory_budget_bytes =
+            (uint64_t)atoi(nvidia_budget) * 1048576ull;
+         pdevice->vk.supported_extensions.EXT_memory_budget = true;
+         WRAPPER_LOG(info, "Faking VK_EXT_memory_budget for NVIDIA: %s MiB",
+                     nvidia_budget);
+      }
+
      WRAPPER_LOG(info, "GPU Name: %s", pdevice->properties2.properties.deviceName);
      WRAPPER_LOG(info, "Driver Version: %s", get_driver_version(pdevice->properties2.properties.driverVersion));
 
@@ -1068,6 +1085,30 @@ wrapper_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
 
    pdevice->dispatch_table.GetPhysicalDeviceMemoryProperties2(
       pdevice->dispatch_handle, pMemoryProperties);
+
+   if (pdevice->nvidia_memory_budget_enabled) {
+      vk_foreach_struct(prop, pMemoryProperties->pNext) {
+         if (prop->sType !=
+             VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT)
+            continue;
+
+         VkPhysicalDeviceMemoryBudgetPropertiesEXT *budget =
+            (VkPhysicalDeviceMemoryBudgetPropertiesEXT *)prop;
+         for (uint32_t i = 0;
+              i < pMemoryProperties->memoryProperties.memoryHeapCount; i++) {
+            budget->heapBudget[i] =
+               pMemoryProperties->memoryProperties.memoryHeaps[i].size;
+            budget->heapUsage[i] = 0;
+         }
+         budget->heapBudget[0] = MIN2(
+            budget->heapBudget[0], pdevice->nvidia_memory_budget_bytes);
+         budget->heapUsage[0] =
+            p_atomic_read(&pdevice->wrapper_memory_live_bytes);
+         WRAPPER_TRACE("NVIDIA memory budget=%llu usage=%llu",
+                       (unsigned long long)budget->heapBudget[0],
+                       (unsigned long long)budget->heapUsage[0]);
+      }
+   }
 
    if (wrapper_vmem_max_size == -1)
       wrapper_vmem_max_size = getenv("WRAPPER_VMEM_MAX_SIZE") ? atoi(getenv("WRAPPER_VMEM_MAX_SIZE")) : 0;

@@ -181,6 +181,7 @@ wsi_create_ahardware_buffer_image_mem(const struct wsi_swapchain *chain,
                                 &chain->alloc, &image->memory);
    if (result != VK_SUCCESS) {
       WRAPPER_LOG(error, "Failed to allocate image memory, res %d", result);
+      return result;
    }
 
    image->num_planes = 1;
