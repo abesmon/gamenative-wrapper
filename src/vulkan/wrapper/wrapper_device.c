@@ -216,6 +216,14 @@ static void process_pnext_chain(VkBaseInStructure *create_info, struct wrapper_p
              WRAPPER_LOG(info, "Unlinking VkPhysicalDeviceHostQueryResetFeatures from pNext chain");
              unlink_vk_struct(create_info, &current, &prev);
              continue;
+          case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES:
+             if (pdevice->base_supported_extensions.EXT_scalar_block_layout ||
+                 pdevice->properties2.properties.apiVersion >= VK_API_VERSION_1_2)
+                break;
+             WRAPPER_LOG(info,
+                "Unlinking emulated VkPhysicalDeviceScalarBlockLayoutFeatures from pNext chain");
+             unlink_vk_struct(create_info, &current, &prev);
+             continue;
           case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_DYNAMIC_RENDERING_UNUSED_ATTACHMENTS_FEATURES_EXT:
              if (pdevice->base_supported_extensions.EXT_dynamic_rendering_unused_attachments)
                 break;
