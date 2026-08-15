@@ -266,6 +266,26 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
       };
       pdevice->dispatch_table.GetPhysicalDeviceProperties2(
          pdevice->dispatch_handle, &pdevice->properties2);
+
+      /* The proprietary Vulkan 1.1 Tegra compiler accepts and executes SPIR-V
+       * using scalar block offsets, but the ICD predates
+       * VK_EXT_scalar_block_layout and therefore does not advertise the
+       * validation opt-in Zink requires.  A device-side probe verifies vec3
+       * array stride 12 and a write at byte 24 through the direct ICD.  Expose
+       * that proven compiler capability at the wrapper boundary; device
+       * creation consumes the feature struct before reaching the old ICD.
+       *
+       * This must run after GetPhysicalDeviceProperties2: driverID and the
+       * base API version are not populated before that query. */
+      if (pdevice->driver_properties.driverID ==
+             VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+          pdevice->properties2.properties.apiVersion < VK_API_VERSION_1_2 &&
+          !pdevice->base_supported_extensions.EXT_scalar_block_layout) {
+         WRAPPER_LOG(info,
+            "Exposing verified VK_EXT_scalar_block_layout for Tegra");
+         pdevice->vk.supported_extensions.EXT_scalar_block_layout = true;
+         supported_features->scalarBlockLayout = true;
+      }
          
       pdevice->dispatch_table.GetPhysicalDeviceMemoryProperties(
          pdevice->dispatch_handle, &pdevice->memory_properties);
