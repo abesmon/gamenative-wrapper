@@ -29,6 +29,36 @@ parse_vk_version_from_env()
    return apiVersion;
 }
 
+static uint32_t
+wrapper_effective_api_version(struct wrapper_physical_device *pdevice,
+                              uint32_t base_api_version)
+{
+   uint32_t requested = parse_vk_version_from_env();
+   const char *engine = pdevice->instance->vk.app_info.engine_name;
+
+   /* Zink changes both feature-query and device-create ABI at Vulkan 1.2: it
+    * uses VkPhysicalDeviceVulkan12Features/13Features aggregates instead of
+    * the extension feature structs understood by an old ICD.  The wrapper
+    * cannot simply remove those aggregates -- doing so creates a device with
+    * none of the corresponding base-driver features enabled, then Zink faults
+    * at its first draw/flush.  Keep the global version override for DXVK and
+    * vkd3d, whose promoted entry points the wrapper bridges, but let Zink see
+    * the real Vulkan 1.1 boundary and select its extension path. */
+   if (requested > base_api_version &&
+       pdevice->driver_properties.driverID ==
+          VK_DRIVER_ID_NVIDIA_PROPRIETARY &&
+       base_api_version < VK_API_VERSION_1_2 &&
+       engine && strstr(engine, "mesa zink")) {
+      WRAPPER_LOG(info,
+         "Capping mesa zink device API to base Vulkan %u.%u",
+         VK_API_VERSION_MAJOR(base_api_version),
+         VK_API_VERSION_MINOR(base_api_version));
+      return base_api_version;
+   }
+
+   return requested ? requested : base_api_version;
+}
+
 static char *
 get_driver_version(const uint32_t driverVersion)
 {
@@ -537,11 +567,12 @@ wrapper_GetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice,
    uint32_t device_id;
    uint32_t vendor_id;
    
-   uint32_t api_version = parse_vk_version_from_env();
-   
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
    pdevice->dispatch_table.GetPhysicalDeviceProperties(
       pdevice->dispatch_handle, pProperties);
+
+   uint32_t api_version =
+      wrapper_effective_api_version(pdevice, pProperties->apiVersion);
 
    char *device_name_env = getenv("WRAPPER_DEVICE_NAME");
    asprintf(&device_name, "Wrapper(%s)", (device_name_env) ? device_name_env : pProperties->deviceName);
@@ -601,11 +632,12 @@ wrapper_GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
    char *driver_info;
    uint32_t driver_id;
 
-   uint32_t api_version = parse_vk_version_from_env();
-
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
    pdevice->dispatch_table.GetPhysicalDeviceProperties2(
       pdevice->dispatch_handle, pProperties);
+
+   uint32_t api_version = wrapper_effective_api_version(
+      pdevice, pProperties->properties.apiVersion);
 
    const char *eng = pdevice->instance->vk.app_info.engine_name;
    bool is_d3d = eng && (strstr(eng, "DXVK") || strstr(eng, "vkd3d"));
