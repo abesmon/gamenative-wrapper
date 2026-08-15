@@ -62,18 +62,23 @@ static unsigned long long get_debug_flag(const char *option) {
    return 0;
 }
 
-static void parse_wrapper_debug_str(char *wrapper_log_level_env) {
+static void parse_wrapper_debug_str(const char *wrapper_log_level_env) {
    if (!wrapper_log_level_env) {
       wrapper_log_mask = 0;
       return;
    }
 
-   char *option = strtok(wrapper_log_level_env, ",");
+   char *options = strdup(wrapper_log_level_env);
+   if (!options)
+      return;
+   char *saveptr = NULL;
+   char *option = strtok_r(options, ",", &saveptr);
 
    while (option != NULL) {
       wrapper_log_mask |= get_debug_flag(option);
-      option = strtok(NULL, ",");
+      option = strtok_r(NULL, ",", &saveptr);
    }
+   free(options);
 }
 
 int get_wrapper_log_level(const char *option) {
@@ -87,6 +92,7 @@ int get_wrapper_log_level(const char *option) {
 
 void write_to_logfile(const char *fmt, const char *level, ...)  {
    static FILE *wrapper_log_file = NULL;
+   static int wrapper_log_pid = -1;
    va_list va_args;
 
    va_start(va_args, level);
@@ -104,12 +110,21 @@ void write_to_logfile(const char *fmt, const char *level, ...)  {
          wrapper_log_file = stdout;
        }
        else {
-         wrapper_log_file = fopen(wrapper_log_filename, "w");
+         const char *append_env = getenv("WRAPPER_LOG_APPEND");
+         const int append = append_env && atoi(append_env) != 0;
+         wrapper_log_file = fopen(wrapper_log_filename, append ? "a" : "w");
        } 
    }
 
    if (wrapper_log_file) {
-      fprintf(wrapper_log_file, "[%s]: ", level);
+      if (wrapper_log_pid == -1) {
+         const char *pid_env = getenv("WRAPPER_LOG_PID");
+         wrapper_log_pid = pid_env && atoi(pid_env) != 0;
+      }
+      if (wrapper_log_pid)
+         fprintf(wrapper_log_file, "[%s pid=%d]: ", level, getpid());
+      else
+         fprintf(wrapper_log_file, "[%s]: ", level);
       vfprintf(wrapper_log_file, fmt, va_args);
       fprintf(wrapper_log_file, "\n");
       fflush(wrapper_log_file);
