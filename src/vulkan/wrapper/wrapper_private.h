@@ -76,6 +76,8 @@ struct wrapper_device {
    struct list_head fence_list;
    struct hash_table_u64 *buffer_table;
    struct hash_table_u64 *image_table;
+   struct hash_table_u64 *image_view_table;
+   struct hash_table_u64 *dynamic_pipeline_table;
    struct hash_table_u64 *fence_table;
    struct wrapper_physical_device *physical;
    struct vk_device_dispatch_table dispatch_table;
@@ -204,6 +206,8 @@ struct wrapper_command_buffer {
    struct wrapper_fence *fence;
    VkCommandBuffer dispatch_handle;
    struct wrapper_push_pool *push_pools;   /* emulated push-descriptor pools */
+   struct list_head dynamic_render_objects;
+   bool dynamic_rendering_active;
 };
 
 VK_DEFINE_HANDLE_CASTS(wrapper_command_buffer, vk.base, VkCommandBuffer,
@@ -238,6 +242,24 @@ struct wrapper_push_template {         /* per VkDescriptorUpdateTemplate */
    VkPipelineBindPoint bind_point;
    VkPipelineLayout pipeline_layout;
    uint32_t set;
+};
+
+struct wrapper_image_view {
+   VkImageView handle;
+   VkImage image;
+   VkFormat format;
+   VkSampleCountFlagBits samples;
+};
+
+struct wrapper_dynamic_pipeline {
+   VkPipeline pipeline;
+   VkRenderPass render_pass;
+};
+
+struct wrapper_dynamic_render_object {
+   struct list_head link;
+   VkRenderPass render_pass;
+   VkFramebuffer framebuffer;
 };
 
 VkResult enumerate_physical_device(struct vk_instance *_instance);
