@@ -81,6 +81,7 @@ wrapper_files = files(
   'spirv_patcher.cpp',
   'wrapper_bcdec.c',
   'wrapper_log.c',
+  'wrapper_profile.c',
   'wrapper_physical_device.c',
 )
 
