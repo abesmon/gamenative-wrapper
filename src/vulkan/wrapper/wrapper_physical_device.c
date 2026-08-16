@@ -263,6 +263,23 @@ VkResult enumerate_physical_device(struct vk_instance *_instance)
          pdevice->vk.supported_extensions.EXT_host_query_reset = true;
          supported_features->hostQueryReset = true;
       }
+
+      /* VK_KHR_imageless_framebuffer, absent from the Vulkan 1.1 Tegra ICD.
+       * Mesa's zink has been imageless-only since 22.2; the OpenGL stack in
+       * the container keeps the pre-22.2 framebuffer path alive for drivers
+       * without the extension, and that path is where a frame aborts on an
+       * attachment-count assertion no one upstream maintains any more.
+       *
+       * The extension is pure deferral, so it emulates cleanly: an imageless
+       * framebuffer carries no image views, and the real ones arrive later in
+       * VkRenderPassAttachmentBeginInfo.  wrapper_CreateFramebuffer hands out
+       * a wrapper-owned record, and wrapper_CmdBeginRenderPass builds the
+       * driver framebuffer once it is finally given the views. */
+      if (!pdevice->base_supported_extensions.KHR_imageless_framebuffer) {
+         WRAPPER_LOG(info, "Emulating VK_KHR_imageless_framebuffer");
+         pdevice->vk.supported_extensions.KHR_imageless_framebuffer = true;
+         supported_features->imagelessFramebuffer = true;
+      }
       if (wrapper_disable_present_wait) {
          WRAPPER_LOG(info, "Disabling present wait");
          supported_features->presentWait = false;
