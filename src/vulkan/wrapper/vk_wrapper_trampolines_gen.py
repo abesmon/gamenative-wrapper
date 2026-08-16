@@ -61,6 +61,12 @@ TEMPLATE_C = Template(COPYRIGHT + """\
 
 #include "wrapper_private.h"
 #include "wrapper_trampolines.h"
+#include "wrapper_profile.h"
+
+/* Every pass-through call the wrapper makes goes through one of these, so
+ * instrumenting the generator is what makes WRAPPER_PROFILE complete rather
+ * than a sample of whatever somebody remembered to annotate. Disabled,
+ * wrapper_profile_begin is one load of a cached int and the rest folds away. */
 
 % for e in entrypoints:
   % if not e.is_physical_device_entrypoint() or e.alias:
@@ -74,10 +80,14 @@ ${e.prefixed_name('wrapper_tramp')}(${e.decl_params()})
 {
     <% assert e.params[0].type == 'VkPhysicalDevice' %>
     VK_FROM_HANDLE(wrapper_physical_device, vk_physical_device, ${e.params[0].name});
+    uint64_t _wp_start = wrapper_profile_begin();
   % if e.return_type == 'void':
     vk_physical_device->dispatch_table.${e.name}(vk_physical_device->dispatch_handle, ${e.call_params(1)});
+    wrapper_profile_end(_wp_start, "${e.name}");
   % else:
-    return vk_physical_device->dispatch_table.${e.name}(vk_physical_device->dispatch_handle, ${e.call_params(1)});
+    ${e.return_type} _wp_result = vk_physical_device->dispatch_table.${e.name}(vk_physical_device->dispatch_handle, ${e.call_params(1)});
+    wrapper_profile_end(_wp_start, "${e.name}");
+    return _wp_result;
   % endif
 }
   % if e.guard is not None:
@@ -110,50 +120,34 @@ struct vk_physical_device_entrypoint_table wrapper_physical_device_trampolines =
 static VKAPI_ATTR ${e.return_type} VKAPI_CALL
 ${e.prefixed_name('wrapper_tramp')}(${e.decl_params()})
 {
-  % if e.params[0].type == 'VkDevice':
-    VK_FROM_HANDLE(wrapper_device, vk_device, ${e.params[0].name});
+<%
+    # The four device-child handle kinds differ only in which wrapper object
+    # carries the dispatch table, so resolve that here and emit one body. The
+    # earlier version repeated the call in eight places, which is why adding
+    # anything around it -- profiling, tracing -- meant touching all eight.
+    kind = e.params[0].type
+    handles = {
+        'VkDevice':        ('wrapper_device',         'vk_device', 'vk_device'),
+        'VkCommandBuffer': ('wrapper_command_buffer', 'wcb',       'wcb->device'),
+        'VkQueue':         ('wrapper_queue',          'wqueue',    'wqueue->device'),
+    }
+    known = kind in handles
+    if known:
+        wrapper_type, var, owner = handles[kind]
+        args = (var + '->dispatch_handle') if len(e.params) == 1 else \
+               (var + '->dispatch_handle, ' + e.call_params(1))
+        call = owner + '->dispatch_table.' + e.name + '(' + args + ')'
+%>
+  % if known:
+    VK_FROM_HANDLE(${wrapper_type}, ${var}, ${e.params[0].name});
+    uint64_t _wp_start = wrapper_profile_begin();
     % if e.return_type == 'void':
-      % if len(e.params) > 1:
-    vk_device->dispatch_table.${e.name}(vk_device->dispatch_handle, ${e.call_params(1)});
-      % else:
-    vk_device->dispatch_table.${e.name}(vk_device->dispatch_handle);
-      % endif
+    ${call};
+    wrapper_profile_end(_wp_start, "${e.name}");
     % else:
-      % if len(e.params) > 1:
-    return vk_device->dispatch_table.${e.name}(vk_device->dispatch_handle, ${e.call_params(1)});
-      % else:
-    return vk_device->dispatch_table.${e.name}(vk_device->dispatch_handle);
-      % endif
-    % endif
-  % elif e.params[0].type == 'VkCommandBuffer':
-    VK_FROM_HANDLE(wrapper_command_buffer, wcb, ${e.params[0].name});
-    % if e.return_type == 'void':
-      % if len(e.params) > 1:
-    wcb->device->dispatch_table.${e.name}(wcb->dispatch_handle, ${e.call_params(1)});
-      % else:
-    wcb->device->dispatch_table.${e.name}(wcb->dispatch_handle);
-      % endif
-    % else:
-      % if len(e.params) > 1:
-    return wcb->device->dispatch_table.${e.name}(wcb->dispatch_handle, ${e.call_params(1)});
-      % else:
-    return wcb->device->dispatch_table.${e.name}(wcb->dispatch_handle);
-      % endif
-    % endif
-  % elif e.params[0].type == 'VkQueue':
-    VK_FROM_HANDLE(wrapper_queue, wqueue, ${e.params[0].name});
-    % if e.return_type == 'void':
-      % if len(e.params) > 1:
-    wqueue->device->dispatch_table.${e.name}(wqueue->dispatch_handle, ${e.call_params(1)});
-      % else:
-    wqueue->device->dispatch_table.${e.name}(wqueue->dispatch_handle);
-      % endif
-    % else:
-      % if len(e.params) > 1:
-    return wqueue->device->dispatch_table.${e.name}(wqueue->dispatch_handle, ${e.call_params(1)});
-      % else:
-    return wqueue->device->dispatch_table.${e.name}(wqueue->dispatch_handle);
-      % endif
+    ${e.return_type} _wp_result = ${call};
+    wrapper_profile_end(_wp_start, "${e.name}");
+    return _wp_result;
     % endif
   % else:
     assert(!"Unhandled device child trampoline case: ${e.params[0].type}");

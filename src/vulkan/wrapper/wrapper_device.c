@@ -5,6 +5,7 @@
 
 #include "wrapper_private.h"
 #include "wrapper_log.h"
+#include "wrapper_profile.h"
 #include "wrapper_trace.h"
 #include "wrapper_bcdec.h"
 #include "wrapper_bcn_spv.h"
@@ -584,6 +585,10 @@ wrapper_UpdateDescriptorSets(VkDevice _device, uint32_t descriptorWriteCount,
                              uint32_t descriptorCopyCount,
                              const VkCopyDescriptorSet *pDescriptorCopies)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkUpdateDescriptorSets" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
 
    if (!device->emulate_null_descriptor || descriptorWriteCount == 0) {
@@ -1290,6 +1295,10 @@ wrapper_CreateBuffer(VkDevice _device,
 					 const VkAllocationCallbacks *pAllocator,
 					 VkBuffer *pBuffer)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCreateBuffer" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    VkResult res;
    VkExternalMemoryHandleTypeFlags handle_types = 0;
@@ -1450,6 +1459,10 @@ wrapper_CreateImage(VkDevice _device,
 					const VkAllocationCallbacks *pAllocator,
 					VkImage *pImage)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCreateImage" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    VkResult res;
    VkImageCreateInfo create_info;
@@ -1916,6 +1929,10 @@ wrapper_DestroyImage(VkDevice _device,
 					 VkImage image,
 					 const VkAllocationCallbacks *pAllocator)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkDestroyImage" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
 
    struct wrapper_image *wi = get_wrapper_image_from_handle(device, image);
@@ -2489,6 +2506,10 @@ VKAPI_ATTR VkResult VKAPI_CALL
 wrapper_BeginCommandBuffer(VkCommandBuffer commandBuffer,
                           const VkCommandBufferBeginInfo *pBeginInfo)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkBeginCommandBuffer" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    wrapper_dynamic_render_objects_reset(wcb);
    if (wcb->device->emulate_push_descriptor)
@@ -2502,6 +2523,10 @@ wrapper_BeginCommandBuffer(VkCommandBuffer commandBuffer,
 VKAPI_ATTR VkResult VKAPI_CALL
 wrapper_EndCommandBuffer(VkCommandBuffer commandBuffer)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkEndCommandBuffer" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    VkResult result = wcb->device->dispatch_table.EndCommandBuffer(
       wcb->dispatch_handle);
@@ -2543,6 +2568,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_CmdPipelineBarrier2(VkCommandBuffer commandBuffer,
                             const VkDependencyInfo *pDependencyInfo)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCmdPipelineBarrier2" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    struct wrapper_device *device = wcb->device;
 
@@ -3003,6 +3032,10 @@ wrapper_CreateGraphicsPipelines(VkDevice _device, VkPipelineCache pipelineCache,
                                 const VkAllocationCallbacks *pAllocator,
                                 VkPipeline *pPipelines)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCreateGraphicsPipelines" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    VkGraphicsPipelineCreateInfo *legacy = NULL;
    VkRenderPass *render_passes = NULL;
@@ -3117,6 +3150,10 @@ wrapper_CmdDraw(VkCommandBuffer commandBuffer, uint32_t vertexCount,
                 uint32_t instanceCount, uint32_t firstVertex,
                 uint32_t firstInstance)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCmdDraw" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    wcb->device->dispatch_table.CmdDraw(wcb->dispatch_handle, vertexCount,
                                        instanceCount, firstVertex, firstInstance);
@@ -3127,6 +3164,10 @@ wrapper_CmdDrawIndexed(VkCommandBuffer commandBuffer, uint32_t indexCount,
                        uint32_t instanceCount, uint32_t firstIndex,
                        int32_t vertexOffset, uint32_t firstInstance)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCmdDrawIndexed" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    wcb->device->dispatch_table.CmdDrawIndexed(
       wcb->dispatch_handle, indexCount, instanceCount, firstIndex,
@@ -3252,6 +3293,10 @@ VKAPI_ATTR VkResult VKAPI_CALL
 wrapper_QueueSubmit(VkQueue _queue, uint32_t submitCount,
                     const VkSubmitInfo* pSubmits, VkFence fence)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkQueueSubmit" };
    VK_FROM_HANDLE(wrapper_queue, queue, _queue);
    VkSubmitInfo wrapper_submits[submitCount];
    VkCommandBuffer *command_buffers;
@@ -3300,6 +3345,10 @@ VKAPI_ATTR VkResult VKAPI_CALL
 wrapper_QueueSubmit2(VkQueue _queue, uint32_t submitCount,
                      const VkSubmitInfo2* pSubmits, VkFence fence)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkQueueSubmit2" };
    VK_FROM_HANDLE(wrapper_queue, queue, _queue);
    VkSubmitInfo2 wrapper_submits[submitCount];
    VkCommandBufferSubmitInfo *command_buffers;
@@ -3560,6 +3609,10 @@ wrapper_WaitForFences(VkDevice _device,
 					  VkBool32 waitAll,
 					  uint64_t timeout)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkWaitForFences" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    VkResult res;
 
@@ -4272,6 +4325,10 @@ wrapper_CmdCopyBufferToImage(VkCommandBuffer commandBuffer,
 							 uint32_t regionCount,
 							 const VkBufferImageCopy *pRegions)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCmdCopyBufferToImage" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    struct wrapper_device *device = wcb->device;
    struct wrapper_image *wi = get_wrapper_image_from_handle(device, dstImage);
@@ -4298,6 +4355,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_CmdCopyBufferToImage2(VkCommandBuffer commandBuffer,
                              const VkCopyBufferToImageInfo2 *pInfo)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCmdCopyBufferToImage2" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    struct wrapper_device *device = wcb->device;
    struct wrapper_image *wi = get_wrapper_image_from_handle(device, pInfo->dstImage);
@@ -4340,6 +4401,10 @@ wrapper_CmdBlitImage(
     uint32_t regionCount, const VkImageBlit* pRegions,
     VkFilter filter)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCmdBlitImage" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    struct wrapper_device *device = wcb->device;
    struct wrapper_image *dst_img = get_wrapper_image_from_handle(device, dstImage);
@@ -4361,6 +4426,10 @@ wrapper_CmdBlitImage2(
     VkCommandBuffer commandBuffer,
     const VkBlitImageInfo2 *pBlitImageInfo)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCmdBlitImage2" };
    VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
    struct wrapper_device *device = wcb->device;
    struct wrapper_image *dst_img = get_wrapper_image_from_handle(device, pBlitImageInfo->dstImage);
@@ -4417,6 +4486,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_DestroyDevice(VkDevice _device, const VkAllocationCallbacks* pAllocator)
 {
    VK_FROM_HANDLE(wrapper_device, device, _device);
+
+   /* Last chance to report: a benchmark that ends cleanly would otherwise lose
+    * whatever accumulated since the final window. */
+   wrapper_profile_dump("device teardown");
 
    wrapper_query_reset_finish(device);
 
