@@ -3,6 +3,7 @@
  * and how to read it.
  */
 
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -44,6 +45,8 @@ static uint64_t window_interval_ns;
  * computes the same value, so no lock is needed on the hot path. */
 static int profile_enabled = -1;
 
+static void *wrapper_profile_ticker(void *unused);
+
 static bool
 wrapper_profile_check_enabled(void)
 {
@@ -62,10 +65,36 @@ wrapper_profile_check_enabled(void)
       window_interval_ns = (uint64_t)(window * 1000000000.0);
       window_start_ns = os_time_get_nano();
       WRAPPER_PROFILE_LOG("Call profile enabled, window %.2f s", window);
+
+      pthread_t ticker;
+      if (pthread_create(&ticker, NULL, wrapper_profile_ticker, NULL) == 0)
+         pthread_detach(ticker);
+      else
+         WRAPPER_PROFILE_LOG("Call profile: no ticker thread; idle windows will not report");
    }
 
    p_atomic_set(&profile_enabled, enabled);
    return enabled != 0;
+}
+
+/* A process that stops calling Vulkan stops reporting, because the only place
+ * the window is checked is inside wrapper_profile_end. That is exactly the
+ * case worth seeing: a client that inspects the device, decides against it and
+ * then sits idle has, by construction, no further calls to carry the dump out.
+ * A detached ticker makes the census independent of the client's liveness. */
+static void *
+wrapper_profile_ticker(void *unused)
+{
+   (void)unused;
+   for (;;) {
+      struct timespec ts = {
+         .tv_sec = (time_t)(window_interval_ns / 1000000000ull),
+         .tv_nsec = (long)(window_interval_ns % 1000000000ull),
+      };
+      nanosleep(&ts, NULL);
+      wrapper_profile_dump("tick");
+   }
+   return NULL;
 }
 
 uint64_t
