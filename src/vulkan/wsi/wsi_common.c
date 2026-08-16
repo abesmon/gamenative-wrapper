@@ -50,6 +50,12 @@
 
 #ifdef __TERMUX__
 #include <android/hardware_buffer.h>
+
+/* Swapchain entry points are installed into the wrapper dispatch table ahead of
+ * the generated trampolines, so they bypass the profile the generator provides.
+ * Instrumented here instead, otherwise presentation reads as absent rather than
+ * as uncounted -- which already cost one wrong conclusion. */
+#include "wrapper_profile.h"
 #endif
 
 uint64_t WSI_DEBUG;
@@ -1081,6 +1087,10 @@ wsi_CreateSwapchainKHR(VkDevice _device,
                        const VkAllocationCallbacks *pAllocator,
                        VkSwapchainKHR *pSwapchain)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCreateSwapchainKHR" };
    MESA_TRACE_FUNC();
    VK_FROM_HANDLE(vk_device, device, _device);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, pCreateInfo->surface);
@@ -1177,6 +1187,10 @@ wsi_DestroySwapchainKHR(VkDevice _device,
                         VkSwapchainKHR _swapchain,
                         const VkAllocationCallbacks *pAllocator)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkDestroySwapchainKHR" };
    MESA_TRACE_FUNC();
    VK_FROM_HANDLE(vk_device, device, _device);
    VK_FROM_HANDLE(wsi_swapchain, swapchain, _swapchain);
@@ -1256,6 +1270,10 @@ wsi_GetSwapchainImagesKHR(VkDevice device,
                           uint32_t *pSwapchainImageCount,
                           VkImage *pSwapchainImages)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetSwapchainImagesKHR" };
    MESA_TRACE_FUNC();
    return wsi_common_get_images(swapchain,
                                 pSwapchainImageCount,
@@ -1270,6 +1288,10 @@ wsi_AcquireNextImageKHR(VkDevice _device,
                         VkFence fence,
                         uint32_t *pImageIndex)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkAcquireNextImageKHR" };
    MESA_TRACE_FUNC();
    VK_FROM_HANDLE(vk_device, device, _device);
 
@@ -1419,6 +1441,10 @@ wsi_AcquireNextImage2KHR(VkDevice _device,
                          const VkAcquireNextImageInfoKHR *pAcquireInfo,
                          uint32_t *pImageIndex)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkAcquireNextImage2KHR" };
    MESA_TRACE_FUNC();
    VK_FROM_HANDLE(vk_device, device, _device);
 
@@ -1741,6 +1767,10 @@ wsi_common_queue_present(const struct wsi_device *wsi,
 VKAPI_ATTR VkResult VKAPI_CALL
 wsi_QueuePresentKHR(VkQueue _queue, const VkPresentInfoKHR *pPresentInfo)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkQueuePresentKHR" };
    MESA_TRACE_FUNC();
    VK_FROM_HANDLE(vk_queue, queue, _queue);
 
