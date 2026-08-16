@@ -1,5 +1,6 @@
 #include "wrapper_private.h"
 #include "wrapper_log.h"
+#include "wrapper_profile.h"
 #include "wrapper_trace.h"
 #include "wrapper_entrypoints.h"
 #include "vk_common_entrypoints.h"
@@ -513,6 +514,10 @@ wrapper_AllocateMemory(VkDevice _device,
                        const VkMemoryAllocateInfo* pAllocateInfo,
                        const VkAllocationCallbacks* pAllocator,
                        VkDeviceMemory* pMemory) {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkAllocateMemory" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    struct wrapper_device_memory *mem;
    VkResult result;
@@ -681,6 +686,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_FreeMemory(VkDevice _device, VkDeviceMemory _memory,
                    const VkAllocationCallbacks* pAllocator)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkFreeMemory" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    struct wrapper_device_memory *mem;
 
@@ -700,6 +709,10 @@ wrapper_MapMemory2KHR(VkDevice _device,
                       const VkMemoryMapInfoKHR* pMemoryMapInfo,
                       void** ppData)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkMapMemory2KHR" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    VkResult result;
    const VkMemoryMapPlacedInfoEXT *placed_info = NULL;
@@ -802,6 +815,10 @@ wrapper_MapMemory2KHR(VkDevice _device,
 
 VKAPI_ATTR void VKAPI_CALL
 wrapper_UnmapMemory(VkDevice _device, VkDeviceMemory _memory) {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkUnmapMemory" };
    vk_common_UnmapMemory(_device, _memory);
 }
 
@@ -809,6 +826,10 @@ VKAPI_ATTR VkResult VKAPI_CALL
 wrapper_UnmapMemory2KHR(VkDevice _device,
                         const VkMemoryUnmapInfoKHR* pMemoryUnmapInfo)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkUnmapMemory2KHR" };
    VK_FROM_HANDLE(wrapper_device, device, _device);
    struct wrapper_device_memory *mem;
 
