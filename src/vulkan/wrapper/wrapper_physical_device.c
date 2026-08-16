@@ -3,6 +3,7 @@
 
 #include "wrapper_private.h"
 #include "wrapper_log.h"
+#include "wrapper_profile.h"
 #include "wrapper_trace.h"
 #include "wrapper_entrypoints.h"
 #include "wrapper_trampolines.h"
@@ -519,6 +520,10 @@ wrapper_EnumerateDeviceExtensionProperties(VkPhysicalDevice physicalDevice,
                                            uint32_t* pPropertyCount,
                                            VkExtensionProperties* pProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkEnumerateDeviceExtensionProperties" };
    return vk_common_EnumerateDeviceExtensionProperties(physicalDevice,
                                                        pLayerName,
                                                        pPropertyCount,
@@ -529,12 +534,20 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_GetPhysicalDeviceFeatures(VkPhysicalDevice physicalDevice,
                                   VkPhysicalDeviceFeatures* pFeatures) 
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceFeatures" };
    return vk_common_GetPhysicalDeviceFeatures(physicalDevice, pFeatures);
 }
 
 VKAPI_ATTR void VKAPI_CALL
 wrapper_GetPhysicalDeviceFeatures2(VkPhysicalDevice physicalDevice,
                                    VkPhysicalDeviceFeatures2* pFeatures) {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceFeatures2" };
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
    vk_common_GetPhysicalDeviceFeatures2(physicalDevice, pFeatures);
 
@@ -581,6 +594,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_GetPhysicalDeviceProperties(VkPhysicalDevice physicalDevice,
                                     VkPhysicalDeviceProperties *pProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceProperties" };
    char *device_name;
    uint32_t device_id;
    uint32_t vendor_id;
@@ -644,6 +661,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_GetPhysicalDeviceProperties2(VkPhysicalDevice physicalDevice,
                                      VkPhysicalDeviceProperties2* pProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceProperties2" };
    uint32_t device_id;
    uint32_t vendor_id;
    char *device_name;
@@ -828,6 +849,10 @@ wrapper_GetPhysicalDeviceImageFormatProperties(VkPhysicalDevice physicalDevice,
 	                                           VkImageCreateFlags flags,
 	                                           VkImageFormatProperties *pImageFormatProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceImageFormatProperties" };
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
   
    switch(format) {
@@ -906,6 +931,10 @@ wrapper_GetPhysicalDeviceImageFormatProperties2(VkPhysicalDevice physicalDevice,
                                                 const VkPhysicalDeviceImageFormatInfo2* pImageFormatInfo,
                                                 VkImageFormatProperties2* pImageFormatProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceImageFormatProperties2" };
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
   
    switch(pImageFormatInfo->format) {
@@ -986,6 +1015,10 @@ wrapper_GetPhysicalDeviceFormatProperties(VkPhysicalDevice physicalDevice,
                                             VkFormat format,
                                             VkFormatProperties* pFormatProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceFormatProperties" };
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
 
    /* Ask the driver first, always. The emulated BC formats then add what the
@@ -1043,6 +1076,10 @@ wrapper_GetPhysicalDeviceFormatProperties2(VkPhysicalDevice physicalDevice,
                                            VkFormat format,
                                            VkFormatProperties2* pFormatProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceFormatProperties2" };
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
 
    pdevice->dispatch_table.GetPhysicalDeviceFormatProperties2(pdevice->dispatch_handle,
@@ -1097,6 +1134,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_GetPhysicalDeviceMemoryProperties(VkPhysicalDevice physicalDevice,
 										  VkPhysicalDeviceMemoryProperties *pMemoryProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceMemoryProperties" };
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
 
    static int wrapper_vmem_max_size = -1;
@@ -1131,6 +1172,10 @@ VKAPI_ATTR void VKAPI_CALL
 wrapper_GetPhysicalDeviceMemoryProperties2(VkPhysicalDevice physicalDevice,
                                            VkPhysicalDeviceMemoryProperties2 *pMemoryProperties)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceMemoryProperties2" };
    VK_FROM_HANDLE(wrapper_physical_device, pdevice, physicalDevice);
 
    static int wrapper_vmem_max_size = -1;
