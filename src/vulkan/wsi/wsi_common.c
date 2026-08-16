@@ -383,6 +383,10 @@ wsi_DestroySurfaceKHR(VkInstance _instance,
                       VkSurfaceKHR _surface,
                       const VkAllocationCallbacks *pAllocator)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkDestroySurfaceKHR" };
    VK_FROM_HANDLE(vk_instance, instance, _instance);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, _surface);
 
@@ -921,6 +925,10 @@ wsi_GetPhysicalDeviceSurfaceSupportKHR(VkPhysicalDevice physicalDevice,
                                        VkSurfaceKHR _surface,
                                        VkBool32 *pSupported)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceSurfaceSupportKHR" };
    VK_FROM_HANDLE(vk_physical_device, device, physicalDevice);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, _surface);
    struct wsi_device *wsi_device = device->wsi_device;
@@ -942,6 +950,10 @@ wsi_GetPhysicalDeviceSurfaceCapabilitiesKHR(
    VkSurfaceKHR _surface,
    VkSurfaceCapabilitiesKHR *pSurfaceCapabilities)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceSurfaceCapabilitiesKHR" };
    VK_FROM_HANDLE(vk_physical_device, device, physicalDevice);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, _surface);
    struct wsi_device *wsi_device = device->wsi_device;
@@ -965,6 +977,10 @@ wsi_GetPhysicalDeviceSurfaceCapabilities2KHR(
    const VkPhysicalDeviceSurfaceInfo2KHR *pSurfaceInfo,
    VkSurfaceCapabilities2KHR *pSurfaceCapabilities)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceSurfaceCapabilities2KHR" };
    VK_FROM_HANDLE(vk_physical_device, device, physicalDevice);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, pSurfaceInfo->surface);
    struct wsi_device *wsi_device = device->wsi_device;
@@ -1027,6 +1043,10 @@ wsi_GetPhysicalDeviceSurfaceFormatsKHR(VkPhysicalDevice physicalDevice,
                                        uint32_t *pSurfaceFormatCount,
                                        VkSurfaceFormatKHR *pSurfaceFormats)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceSurfaceFormatsKHR" };
    VK_FROM_HANDLE(vk_physical_device, device, physicalDevice);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, _surface);
    struct wsi_device *wsi_device = device->wsi_device;
@@ -1042,6 +1062,10 @@ wsi_GetPhysicalDeviceSurfaceFormats2KHR(VkPhysicalDevice physicalDevice,
                                         uint32_t *pSurfaceFormatCount,
                                         VkSurfaceFormat2KHR *pSurfaceFormats)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceSurfaceFormats2KHR" };
    VK_FROM_HANDLE(vk_physical_device, device, physicalDevice);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, pSurfaceInfo->surface);
    struct wsi_device *wsi_device = device->wsi_device;
@@ -1057,6 +1081,10 @@ wsi_GetPhysicalDeviceSurfacePresentModesKHR(VkPhysicalDevice physicalDevice,
                                             uint32_t *pPresentModeCount,
                                             VkPresentModeKHR *pPresentModes)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkGetPhysicalDeviceSurfacePresentModesKHR" };
    VK_FROM_HANDLE(vk_physical_device, device, physicalDevice);
    ICD_FROM_HANDLE(VkIcdSurfaceBase, surface, _surface);
    struct wsi_device *wsi_device = device->wsi_device;

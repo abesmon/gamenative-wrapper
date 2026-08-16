@@ -74,6 +74,11 @@
 #include <poll.h>
 #include <sys/socket.h>
 
+/* The surface entry points are where a client's presentation request first
+ * enters this wrapper. Counting them separates "never asked" from "asked and
+ * was refused", which no other instrument here can tell apart. */
+#include "wrapper_profile.h"
+
 /* How long to wait for the X server's acknowledgement that it has taken an
  * AHardwareBuffer off the socket. Long enough that a loaded server is not
  * mistaken for a broken one, and finite because the alternative is a
@@ -1053,6 +1058,10 @@ wsi_CreateXcbSurfaceKHR(VkInstance _instance,
                         const VkAllocationCallbacks *pAllocator,
                         VkSurfaceKHR *pSurface)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCreateXcbSurfaceKHR" };
    VK_FROM_HANDLE(vk_instance, instance, _instance);
    struct wsi_x11_vk_surface *surface;
 
@@ -1085,6 +1094,10 @@ wsi_CreateXlibSurfaceKHR(VkInstance _instance,
                          const VkAllocationCallbacks *pAllocator,
                          VkSurfaceKHR *pSurface)
 {
+   uint64_t _wp_start = wrapper_profile_begin();
+   struct wrapper_profile_scope _wp_scope
+      __attribute__((cleanup(wrapper_profile_scope_end))) =
+      { _wp_start, "vkCreateXlibSurfaceKHR" };
    VK_FROM_HANDLE(vk_instance, instance, _instance);
    struct wsi_x11_vk_surface *surface;
 
