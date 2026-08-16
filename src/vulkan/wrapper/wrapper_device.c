@@ -215,6 +215,13 @@ static void process_pnext_chain(VkBaseInStructure *create_info, struct wrapper_p
              WRAPPER_LOG(info, "Unlinking VkPhysicalDeviceHostQueryResetFeatures from pNext chain");
              unlink_vk_struct(create_info, &current, &prev);
              continue;
+          case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES:
+             if (pdevice->base_supported_extensions.KHR_imageless_framebuffer)
+                break;
+             WRAPPER_LOG(info,
+                "Unlinking emulated VkPhysicalDeviceImagelessFramebufferFeatures from pNext chain");
+             unlink_vk_struct(create_info, &current, &prev);
+             continue;
           case VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_SCALAR_BLOCK_LAYOUT_FEATURES:
              if (pdevice->base_supported_extensions.EXT_scalar_block_layout ||
                  pdevice->properties2.properties.apiVersion >= VK_API_VERSION_1_2)
@@ -1047,6 +1054,7 @@ wrapper_CreateDevice(VkPhysicalDevice physicalDevice,
    list_inithead(&device->fence_list);
    device->image_table = _mesa_hash_table_u64_create(NULL);
    device->image_view_table = _mesa_hash_table_u64_create(NULL);
+   device->imageless_fb_table = _mesa_hash_table_u64_create(NULL);
    device->dynamic_pipeline_table = _mesa_hash_table_u64_create(NULL);
    device->buffer_table = _mesa_hash_table_u64_create(NULL);
    device->fence_table = _mesa_hash_table_u64_create(NULL);
@@ -1185,6 +1193,24 @@ if (pdf2 && pdf2->features.f) { \
    if (device->emulate_null_descriptor) {
       WRAPPER_LOG(info, "Emulating nullDescriptor with canonical zero resources");
       wrapper_create_null_resources(device);
+   }
+
+   /* Imageless-framebuffer emulation: on when the app enabled the extension
+    * the wrapper advertises on the physical device and the base driver has
+    * none of its own.  WRAPPER_DISABLE_IMAGELESS_FB=1 turns it off, which
+    * leaves the extension unadvertised only from the device's point of view --
+    * the A/B a hypothesis about it needs. */
+   {
+      static int disable = -1;
+      if (disable == -1)
+         disable = getenv("WRAPPER_DISABLE_IMAGELESS_FB")
+            ? atoi(getenv("WRAPPER_DISABLE_IMAGELESS_FB")) : 0;
+      device->emulate_imageless_framebuffer =
+         !disable &&
+         device->vk.enabled_extensions.KHR_imageless_framebuffer &&
+         !physical_device->base_supported_extensions.KHR_imageless_framebuffer;
+      if (device->emulate_imageless_framebuffer)
+         WRAPPER_LOG(info, "Emulating imageless framebuffers for this device");
    }
 
    /* Push-descriptor emulation: on when the app enabled VK_KHR_push_descriptor
@@ -1592,6 +1618,272 @@ wrapper_DestroyImageView(VkDevice _device, VkImageView imageView,
    free(view);
    device->dispatch_table.DestroyImageView(device->dispatch_handle, imageView,
                                            pAllocator);
+}
+
+/* ---- VK_KHR_imageless_framebuffer emulation ---------------------------- *
+ *
+ * An imageless framebuffer names no image views at creation; they arrive at
+ * vkCmdBeginRenderPass in VkRenderPassAttachmentBeginInfo.  A driver without
+ * the extension can still be given a plain framebuffer at that moment, so the
+ * emulation is deferral and nothing else: hold the dimensions, build the real
+ * object when the views turn up, and drop it with the rest of the command
+ * buffer's transient render objects.
+ *
+ * The handle handed to the application is the address of the record.  Every
+ * lookup goes through imageless_fb_table, so a driver framebuffer is never
+ * mistaken for one of ours.
+ */
+static uint64_t
+wrapper_framebuffer_key(VkFramebuffer framebuffer)
+{
+   return (uint64_t)(uintptr_t)framebuffer;
+}
+
+static struct wrapper_imageless_framebuffer *
+wrapper_lookup_imageless_framebuffer(struct wrapper_device *device,
+                                     VkFramebuffer framebuffer)
+{
+   struct wrapper_imageless_framebuffer *fb;
+
+   if (!device->emulate_imageless_framebuffer ||
+       framebuffer == VK_NULL_HANDLE)
+      return NULL;
+
+   simple_mtx_lock(&device->resource_mutex);
+   fb = _mesa_hash_table_u64_search(device->imageless_fb_table,
+                                    wrapper_framebuffer_key(framebuffer));
+   simple_mtx_unlock(&device->resource_mutex);
+
+   return fb;
+}
+
+VKAPI_ATTR VkResult VKAPI_CALL
+wrapper_CreateFramebuffer(VkDevice _device,
+                          const VkFramebufferCreateInfo *pCreateInfo,
+                          const VkAllocationCallbacks *pAllocator,
+                          VkFramebuffer *pFramebuffer)
+{
+   VK_FROM_HANDLE(wrapper_device, device, _device);
+
+   if (!device->emulate_imageless_framebuffer ||
+       !(pCreateInfo->flags & VK_FRAMEBUFFER_CREATE_IMAGELESS_BIT))
+      return device->dispatch_table.CreateFramebuffer(device->dispatch_handle,
+                                                      pCreateInfo, pAllocator,
+                                                      pFramebuffer);
+
+   struct wrapper_imageless_framebuffer *fb = calloc(1, sizeof(*fb));
+   if (!fb)
+      return VK_ERROR_OUT_OF_HOST_MEMORY;
+
+   fb->render_pass = pCreateInfo->renderPass;
+   fb->attachment_count = pCreateInfo->attachmentCount;
+   fb->width = pCreateInfo->width;
+   fb->height = pCreateInfo->height;
+   fb->layers = pCreateInfo->layers;
+
+   VkFramebuffer handle = (VkFramebuffer)(uintptr_t)fb;
+
+   simple_mtx_lock(&device->resource_mutex);
+   _mesa_hash_table_u64_insert(device->imageless_fb_table,
+                               wrapper_framebuffer_key(handle), fb);
+   simple_mtx_unlock(&device->resource_mutex);
+
+   WRAPPER_LOG(info,
+      "Imageless framebuffer %ux%u layers=%u attachments=%u",
+      fb->width, fb->height, fb->layers, fb->attachment_count);
+
+   *pFramebuffer = handle;
+   return VK_SUCCESS;
+}
+
+VKAPI_ATTR void VKAPI_CALL
+wrapper_DestroyFramebuffer(VkDevice _device, VkFramebuffer framebuffer,
+                           const VkAllocationCallbacks *pAllocator)
+{
+   VK_FROM_HANDLE(wrapper_device, device, _device);
+   struct wrapper_imageless_framebuffer *fb = NULL;
+
+   if (framebuffer == VK_NULL_HANDLE)
+      return;
+
+   if (device->emulate_imageless_framebuffer) {
+      simple_mtx_lock(&device->resource_mutex);
+      fb = _mesa_hash_table_u64_search(device->imageless_fb_table,
+                                       wrapper_framebuffer_key(framebuffer));
+      if (fb)
+         _mesa_hash_table_u64_remove(device->imageless_fb_table,
+                                     wrapper_framebuffer_key(framebuffer));
+      simple_mtx_unlock(&device->resource_mutex);
+   }
+
+   if (fb) {
+      free(fb);
+      return;
+   }
+
+   device->dispatch_table.DestroyFramebuffer(device->dispatch_handle,
+                                             framebuffer, pAllocator);
+}
+
+/* Returns true when the begin info names a wrapper-owned imageless
+ * framebuffer, in which case *out holds the driver framebuffer to use --
+ * VK_NULL_HANDLE if one could not be built, and then the render pass is
+ * dropped rather than begun against a handle the driver never issued. */
+static bool
+wrapper_lower_imageless_framebuffer(struct wrapper_command_buffer *wcb,
+                                    const VkRenderPassBeginInfo *pBegin,
+                                    VkFramebuffer *out)
+{
+   struct wrapper_device *device = wcb->device;
+   const VkRenderPassAttachmentBeginInfo *attachments = NULL;
+   struct wrapper_imageless_framebuffer *fb;
+
+   fb = wrapper_lookup_imageless_framebuffer(device, pBegin->framebuffer);
+   if (!fb)
+      return false;
+
+   *out = VK_NULL_HANDLE;
+
+   vk_foreach_struct_const(s, pBegin->pNext) {
+      if (s->sType == VK_STRUCTURE_TYPE_RENDER_PASS_ATTACHMENT_BEGIN_INFO) {
+         attachments = (const VkRenderPassAttachmentBeginInfo *)s;
+         break;
+      }
+   }
+
+   if (!attachments) {
+      WRAPPER_LOG(error,
+         "Imageless framebuffer begun without VkRenderPassAttachmentBeginInfo");
+      return true;
+   }
+   if (attachments->attachmentCount != fb->attachment_count) {
+      WRAPPER_LOG(error,
+         "Imageless framebuffer attachment count %u, begin supplies %u",
+         fb->attachment_count, attachments->attachmentCount);
+      return true;
+   }
+
+   /* Built against the render pass of this begin, which the spec already
+    * requires to be compatible with the one the framebuffer was created
+    * with -- so the stricter of the two is the one actually in use. */
+   VkFramebufferCreateInfo info = {
+      .sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
+      .renderPass = pBegin->renderPass,
+      .attachmentCount = attachments->attachmentCount,
+      .pAttachments = attachments->pAttachments,
+      .width = fb->width,
+      .height = fb->height,
+      .layers = fb->layers,
+   };
+   VkFramebuffer real = VK_NULL_HANDLE;
+   VkResult result = device->dispatch_table.CreateFramebuffer(
+      device->dispatch_handle, &info, NULL, &real);
+   if (result != VK_SUCCESS) {
+      WRAPPER_LOG(error, "Failed to realise imageless framebuffer: %d", result);
+      return true;
+   }
+
+   struct wrapper_dynamic_render_object *object = calloc(1, sizeof(*object));
+   if (!object) {
+      device->dispatch_table.DestroyFramebuffer(device->dispatch_handle, real,
+                                                NULL);
+      return true;
+   }
+   object->framebuffer = real;
+   list_addtail(&object->link, &wcb->dynamic_render_objects);
+
+   *out = real;
+   return true;
+}
+
+VKAPI_ATTR void VKAPI_CALL
+wrapper_CmdBeginRenderPass(VkCommandBuffer commandBuffer,
+                           const VkRenderPassBeginInfo *pRenderPassBegin,
+                           VkSubpassContents contents)
+{
+   VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
+   VkRenderPassBeginInfo begin = *pRenderPassBegin;
+   VkFramebuffer real;
+
+   if (wrapper_lower_imageless_framebuffer(wcb, pRenderPassBegin, &real)) {
+      if (real == VK_NULL_HANDLE)
+         return;
+      begin.framebuffer = real;
+   }
+
+   wcb->device->dispatch_table.CmdBeginRenderPass(wcb->dispatch_handle, &begin,
+                                                  contents);
+}
+
+VKAPI_ATTR void VKAPI_CALL
+wrapper_CmdBeginRenderPass2(VkCommandBuffer commandBuffer,
+                            const VkRenderPassBeginInfo *pRenderPassBegin,
+                            const VkSubpassBeginInfo *pSubpassBeginInfo)
+{
+   VK_FROM_HANDLE(wrapper_command_buffer, wcb, commandBuffer);
+   struct wrapper_device *device = wcb->device;
+   VkRenderPassBeginInfo begin = *pRenderPassBegin;
+   VkFramebuffer real;
+
+   if (wrapper_lower_imageless_framebuffer(wcb, pRenderPassBegin, &real)) {
+      if (real == VK_NULL_HANDLE)
+         return;
+      begin.framebuffer = real;
+   }
+
+   if (device->dispatch_table.CmdBeginRenderPass2)
+      device->dispatch_table.CmdBeginRenderPass2(wcb->dispatch_handle, &begin,
+                                                 pSubpassBeginInfo);
+   else
+      device->dispatch_table.CmdBeginRenderPass2KHR(wcb->dispatch_handle,
+                                                    &begin, pSubpassBeginInfo);
+}
+
+/* Diagnostic only: the shape of every render pass a client builds.  The
+ * assertion this work started from compares a render pass's colour, depth and
+ * resolve counts against a framebuffer's attachment count, and the counts are
+ * invisible from outside the GL driver -- but every one of them arrives here
+ * first. */
+VKAPI_ATTR VkResult VKAPI_CALL
+wrapper_CreateRenderPass(VkDevice _device,
+                         const VkRenderPassCreateInfo *pCreateInfo,
+                         const VkAllocationCallbacks *pAllocator,
+                         VkRenderPass *pRenderPass)
+{
+   VK_FROM_HANDLE(wrapper_device, device, _device);
+
+   if (get_wrapper_log_level("info")) {
+      uint32_t multisampled = 0, colors = 0, resolves = 0, depth = 0;
+
+      for (uint32_t i = 0; i < pCreateInfo->attachmentCount; i++) {
+         if (pCreateInfo->pAttachments[i].samples != VK_SAMPLE_COUNT_1_BIT)
+            multisampled++;
+      }
+      for (uint32_t i = 0; i < pCreateInfo->subpassCount; i++) {
+         const VkSubpassDescription *subpass = &pCreateInfo->pSubpasses[i];
+         colors += subpass->colorAttachmentCount;
+         if (subpass->pResolveAttachments) {
+            for (uint32_t a = 0; a < subpass->colorAttachmentCount; a++) {
+               if (subpass->pResolveAttachments[a].attachment !=
+                   VK_ATTACHMENT_UNUSED)
+                  resolves++;
+            }
+         }
+         if (subpass->pDepthStencilAttachment &&
+             subpass->pDepthStencilAttachment->attachment !=
+                VK_ATTACHMENT_UNUSED)
+            depth++;
+      }
+      WRAPPER_LOG(info,
+         "RenderPass attachments=%u subpasses=%u colors=%u depth=%u "
+         "resolves=%u multisampled=%u",
+         pCreateInfo->attachmentCount, pCreateInfo->subpassCount, colors,
+         depth, resolves, multisampled);
+   }
+
+   return device->dispatch_table.CreateRenderPass(device->dispatch_handle,
+                                                  pCreateInfo, pAllocator,
+                                                  pRenderPass);
 }
 
 VKAPI_ATTR void VKAPI_CALL
@@ -4138,8 +4430,11 @@ wrapper_DestroyDevice(VkDevice _device, const VkAllocationCallbacks* pAllocator)
    }
    hash_table_u64_foreach(device->image_view_table, entry)
       free(entry.data);
+   hash_table_u64_foreach(device->imageless_fb_table, entry)
+      free(entry.data);
    _mesa_hash_table_u64_destroy(device->dynamic_pipeline_table);
    _mesa_hash_table_u64_destroy(device->image_view_table);
+   _mesa_hash_table_u64_destroy(device->imageless_fb_table);
 
    list_for_each_entry_safe(struct vk_queue, queue, &device->vk.queues, link) {
       vk_queue_finish(queue);

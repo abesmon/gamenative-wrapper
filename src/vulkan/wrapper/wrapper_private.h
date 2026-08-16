@@ -77,6 +77,7 @@ struct wrapper_device {
    struct hash_table_u64 *buffer_table;
    struct hash_table_u64 *image_table;
    struct hash_table_u64 *image_view_table;
+   struct hash_table_u64 *imageless_fb_table;
    struct hash_table_u64 *dynamic_pipeline_table;
    struct hash_table_u64 *fence_table;
    struct wrapper_physical_device *physical;
@@ -84,6 +85,7 @@ struct wrapper_device {
 
    bool emulate_null_descriptor;
    bool device_fault_enabled;
+   bool emulate_imageless_framebuffer;
 
    /* VK_KHR_push_descriptor emulation (for drivers lacking it, e.g. Mali r44).
     * Enabled when the app uses push descriptors and either the base driver
@@ -260,6 +262,18 @@ struct wrapper_dynamic_render_object {
    struct list_head link;
    VkRenderPass render_pass;
    VkFramebuffer framebuffer;
+};
+
+/* An imageless VkFramebuffer the wrapper handed out itself, because the base
+ * driver has no VK_KHR_imageless_framebuffer.  It holds no driver object: the
+ * real framebuffer is built at vkCmdBeginRenderPass, once the image views
+ * arrive in VkRenderPassAttachmentBeginInfo. */
+struct wrapper_imageless_framebuffer {
+   VkRenderPass render_pass;
+   uint32_t attachment_count;
+   uint32_t width;
+   uint32_t height;
+   uint32_t layers;
 };
 
 VkResult enumerate_physical_device(struct vk_instance *_instance);
